@@ -24,6 +24,7 @@ type memoryLog struct {
 	mu   sync.Mutex
 }
 
+// newMemoryLog 构造内存日志后端。零值即可用,无需预分配容量。
 func newMemoryLog() Store {
 	return &memoryLog{}
 }
