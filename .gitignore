@@ -13,6 +13,9 @@
 .vscode/
 .DS_Store
 
+# superpowers 计划(本地工作文档,不进 git)
+docs/superpowers/
+
 # 将来的 WAL / 数据目录
 /data/
 *.log
