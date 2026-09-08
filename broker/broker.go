@@ -31,6 +31,9 @@ func New(opts ...Option) *Broker {
 	for _, o := range opts {
 		o(b)
 	}
+	if b.newStore == nil {
+		b.newStore = newMemoryLog
+	}
 	return b
 }
 

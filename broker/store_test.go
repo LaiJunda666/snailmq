@@ -3,7 +3,7 @@ package broker
 import (
 	"bytes"
 	"fmt"
-	"sync"
+	"math"
 	"testing"
 )
 
@@ -114,65 +114,26 @@ func TestMemoryLogLen(t *testing.T) {
 	}
 }
 
-// TestMemoryLogConcurrency 让多个写者与读者同时操作同一日志,
-// 在 -race 下验证内部锁能把重叠的 Append/Read 保护在竞争之外。
-func TestMemoryLogConcurrency(t *testing.T) {
+// TestMemoryLogReadMaxIntClamped 验证超大 max 与越界 from 不会溢出/panic,
+// 超大 max 按日志剩余夹紧。
+func TestMemoryLogReadMaxIntClamped(t *testing.T) {
 	store := newMemoryLog()
-
-	const (
-		writers   = 4
-		perWriter = 250
-		readers   = 4
-		maxBatch  = 32
-	)
-	total := int64(writers * perWriter)
-
-	stop := make(chan struct{})
-	var readersWg sync.WaitGroup
-	for range readers {
-		readersWg.Go(func() {
-			for {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-				msgs := store.Read(0, maxBatch)
-				if len(msgs) > maxBatch {
-					t.Errorf("Read() returned %d messages, want <= %d", len(msgs), maxBatch)
-					return
-				}
-				for i, m := range msgs {
-					if m.Offset < 0 || int64(m.Offset) >= total {
-						t.Errorf("Read() offset %d out of range", m.Offset)
-						return
-					}
-					if i > 0 && m.Offset != msgs[i-1].Offset+1 {
-						t.Errorf("Read() offsets not contiguous: %d after %d", m.Offset, msgs[i-1].Offset)
-						return
-					}
-				}
-			}
-		})
+	for i := range 5 {
+		if _, err := store.Append(fmt.Appendf(nil, "message-%d", i)); err != nil {
+			t.Fatalf("Append() error = %v", err)
+		}
 	}
 
-	var writersWg sync.WaitGroup
-	for range writers {
-		writersWg.Go(func() {
-			for j := 0; j < perWriter; j++ {
-				if _, err := store.Append([]byte("message")); err != nil {
-					t.Errorf("Append() error = %v", err)
-					return
-				}
-			}
-		})
+	got := store.Read(1, math.MaxInt)
+	if len(got) != 4 {
+		t.Fatalf("Read(1, MaxInt) returned %d messages; want 4", len(got))
 	}
-	writersWg.Wait()
-	close(stop)
-	readersWg.Wait()
+	if got[0].Offset != 1 || got[3].Offset != 4 {
+		t.Fatalf("Read(1, MaxInt) offsets = %d..%d; want 1..4", got[0].Offset, got[3].Offset)
+	}
 
-	if got := store.Len(); got != total {
-		t.Errorf("Len() = %d, want %d", got, total)
+	if msgs := store.Read(math.MaxInt64, 1); msgs != nil {
+		t.Fatalf("Read(MaxInt64, 1) = %d msgs; want nil", len(msgs))
 	}
 }
 

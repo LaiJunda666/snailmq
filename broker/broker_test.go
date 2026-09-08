@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestBrokerLifecycle 验证 broker 门面基本流程:建 topic、重复建报错、
@@ -129,5 +130,80 @@ func TestBrokerConcurrentPublishConsistency(t *testing.T) {
 	}
 	if !reflect.DeepEqual(int64(len(seen)), int64(got)) {
 		t.Fatalf("received %d; want %d", got, total)
+	}
+}
+
+// TestBrokerConcurrentWakeAndClose 让一个阻塞中的订阅读者与多个生产者并发发布,
+// 发布结束后随即关闭订阅——在 -race 下压测唤醒 / 关闭路径:
+// 验证 reader 与 writer 并发无 data race、不重复、不丢已发布消息、无死锁。
+func TestBrokerConcurrentWakeAndClose(t *testing.T) {
+	b := New()
+	if err := b.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+	s, err := b.Subscribe("t")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const producers, perProducer = 8, 100
+	total := int64(producers * perProducer)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	offsets := make(chan int64, total)
+	readerDone := make(chan struct{})
+	var last int64 = -1
+	go func() {
+		defer close(readerDone)
+		for {
+			msgs, err := s.Read(ctx, 16)
+			if err != nil {
+				return
+			}
+			for _, m := range msgs {
+				if m.Offset <= last {
+					t.Errorf("offset %d out of order after %d", m.Offset, last)
+					return
+				}
+				last = m.Offset
+				offsets <- m.Offset
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	for range producers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range perProducer {
+				if _, err := b.Publish("t", []byte("x")); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	_ = s.Close()
+	<-readerDone
+	close(offsets)
+
+	seen := make([]bool, total)
+	count := 0
+	for off := range offsets {
+		if off < 0 || off >= total {
+			t.Fatalf("offset %d out of range", off)
+		}
+		if seen[off] {
+			t.Fatalf("offset %d duplicated", off)
+		}
+		seen[off] = true
+		count++
+	}
+	if int64(count) != total {
+		t.Fatalf("received %d; want %d", count, total)
 	}
 }

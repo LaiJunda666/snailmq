@@ -3,6 +3,8 @@ package broker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -121,6 +123,68 @@ func TestPublishAfterCloseErrors(t *testing.T) {
 	p.close()
 	if _, err := p.Publish([]byte("x")); !errors.Is(err, ErrClosed) {
 		t.Fatalf("err = %v; want ErrClosed", err)
+	}
+}
+
+// TestCloseIsIdempotent 验证订阅 Close 可重复调用,不 panic(防 double-close 回归)。
+func TestCloseIsIdempotent(t *testing.T) {
+	p := newPartition(newMemoryLog())
+	s, err := p.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("1st Close err = %v; want nil", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("2nd Close err = %v; want nil", err)
+	}
+}
+
+// TestPartitionCloseThenSubscriptionClose 验证分区关闭后,对旧订阅再 Close 不 panic。
+func TestPartitionCloseThenSubscriptionClose(t *testing.T) {
+	p := newPartition(newMemoryLog())
+	s, err := p.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.close()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close after partition close err = %v; want nil", err)
+	}
+}
+
+// TestReadNonPositiveMaxReadsOne 验证 max <= 0 时按 1 处理。
+func TestReadNonPositiveMaxReadsOne(t *testing.T) {
+	p := newPartition(newMemoryLog())
+	if _, err := p.Publish([]byte("only")); err != nil {
+		t.Fatal(err)
+	}
+	s, err := p.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := s.Read(context.Background(), 0)
+	if err != nil || len(msgs) != 1 || string(msgs[0].Payload) != "only" {
+		t.Fatalf("Read(ctx, 0) = %v, %v; want single 'only'", msgs, err)
+	}
+}
+
+// TestReadHugeMaxClamped 验证超大 max 不溢出,按日志剩余返回。
+func TestReadHugeMaxClamped(t *testing.T) {
+	p := newPartition(newMemoryLog())
+	for i := range 5 {
+		if _, err := p.Publish([]byte(fmt.Sprintf("m%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, err := p.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := s.Read(context.Background(), math.MaxInt)
+	if err != nil || len(msgs) != 5 {
+		t.Fatalf("Read(ctx, MaxInt) = %d msgs, %v; want 5, nil", len(msgs), err)
 	}
 }
 
