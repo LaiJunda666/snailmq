@@ -16,7 +16,10 @@ type Subscription struct {
 }
 
 // Read 阻塞直到取到 [offset, offset+max) 中至少一条消息,返回这批消息并推进游标。
-// max <= 0 时视为 1。返回时机与错误:
+// max <= 0 时视为 1;max 超过日志剩余时按剩余夹紧(见 Store.Read),不会溢出。
+// 同一 Subscription 同一时刻只能有一个 goroutine 调用 Read(单读者约定);
+// 并发调用不会 data race,但会造成消息被重复返回、游标互相覆盖。
+// 返回时机与错误:
 //   - 有可读消息:返回消息切片(切片内容来自日志,不可修改),推进 s.offset;
 //   - 订阅或分区被关闭:返回 nil, ErrClosed;
 //   - ctx 先被取消 / 超时:返回 nil, ctx.Err()。
