@@ -31,6 +31,10 @@ func (s *Subscription) Read(ctx context.Context, max int) ([]Message, error) {
 	p := s.partition
 	for {
 		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return nil, ErrClosed
+		}
 		msgs := p.store.Read(s.offset, max)
 		if len(msgs) > 0 {
 			s.offset = msgs[len(msgs)-1].Offset + 1
