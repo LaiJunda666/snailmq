@@ -1,3 +1,16 @@
+// Package broker 是 mq-lite 的内存版广播内核,不依赖网络层,可独立测试、可内嵌使用。
+//
+// 模型:每个 topic 一个分区(Partition),分区持有有序不可变日志(Store),
+// 广播订阅者(Subscription)各持独立 offset 尾随读取。写入由分区持锁串行化,
+// 新消息到达时经 cap-1 的 ready 通道唤醒阻塞中的订阅者;关闭经 done 通道传播。
+//
+// 并发与所有权:
+//   - Broker / Partition 线程安全;Store 不自带并发安全,由分区持锁串行调用;
+//   - 同一个 Subscription 同一时刻只能被单个 goroutine 调用 Read;
+//   - Message.Payload 字节在订阅者之间共享,发布后不得修改。
+//
+// 日志后端抽象为 Store 接口,现仅提供内存实现 memoryLog;未来 WAL 磁盘实现
+// 只要满足同一接口即可通过 WithStoreFactory 替换。
 package broker
 
 import (
