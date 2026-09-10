@@ -72,8 +72,8 @@ func TestBrokerClose(t *testing.T) {
 	if err := b.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Close(); !errors.Is(err, ErrClosed) {
-		t.Fatalf("2nd Close err = %v; want ErrClosed", err)
+	if err := b.Close(); err != nil {
+		t.Fatalf("2nd Close err = %v; want nil (idempotent)", err)
 	}
 	if _, err := b.Publish("t", []byte("y")); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Publish after close = %v; want ErrClosed", err)
@@ -149,8 +149,8 @@ func TestBrokerClosedErrorContext(t *testing.T) {
 	if _, err := b.Subscribe("t"); !errors.Is(err, ErrClosed) || !strings.Contains(err.Error(), `"t"`) {
 		t.Fatalf("Subscribe err = %v; want ErrClosed with topic context", err)
 	}
-	if err := b.Close(); !errors.Is(err, ErrClosed) {
-		t.Fatalf("2nd Close err = %v; want ErrClosed", err)
+	if err := b.Close(); err != nil {
+		t.Fatalf("2nd Close err = %v; want nil (idempotent)", err)
 	}
 }
 

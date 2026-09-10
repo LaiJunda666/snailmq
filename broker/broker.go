@@ -137,13 +137,13 @@ func wrapClosed(op, topic string, err error) error {
 }
 
 // Close 关闭 broker:幂等,关闭所有主题的分区并唤醒其订阅者。
-// 首次调用返回 nil;再次调用及关闭后的任何操作返回 ErrClosed。
+// 重复调用返回 nil;关闭后的其它操作(CreateTopic/Publish/Subscribe)返回包装后的 ErrClosed。
 func (b *Broker) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.closed {
-		return ErrClosed
+		return nil
 	}
 	b.closed = true
 

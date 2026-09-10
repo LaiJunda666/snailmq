@@ -16,6 +16,7 @@ benchmark/  基准与报告
 - Publish:取 partition 锁 → store.Append → 对每个订阅者非阻塞发 `ready`(cap-1)信号
 - 订阅者:循环读 `[offset, len)`;无新消息则阻塞在 `ready` / `done` / ctx
 - 优雅关闭:Broker.Close → partition.close → close 所有订阅者 `done` → 读方收到 `ErrClosed`
+- 关闭语义:`Close` 幂等,重复调用返回 nil;关闭后的其它操作返回包装后的 `ErrClosed`(判断用 `errors.Is`)
 
 ## 依赖方向
 
