@@ -14,7 +14,13 @@
 - broker:消息模型 `Message`、日志 `Store` 接口与内存实现 `memoryLog`
 - broker:分区 `Partition` 与广播订阅 `Subscription`(共享日志 + 独立游标 + ready 通知 + 关闭语义)
 - broker:线程安全门面 `Broker`(`New`/`CreateTopic`/`Publish`/`Subscribe`/`Close`)管理多主题
-- protocol:自研二进制帧与 payload 编解码(Magic/Version/Opcode、防截断与长度上限,含 fuzz)
+- protocol:二进制帧与 payload 编解码(Magic/Version/Opcode、防截断与长度上限,含 fuzz)
+- broker:空主题名哨兵 `ErrTopicNameEmpty`
+
+### 变更
+
+- broker:`Close` 统一为幂等语义,重复调用返回 nil
+- broker:门面返回的 `ErrClosed` 附加操作与 topic 上下文(`errors.Is` 判定仍成立)
 
 ### 修复
 
