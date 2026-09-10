@@ -6,11 +6,13 @@
 
 V0 最小闭环进行中;工程骨架(Makefile / CI / AGENTS / 架构·协议·路线文档)已补齐,尚未打 tag:
 
-- 已完成:`broker` 内核(单元测试 + `-race` 通过)——
-  - 消息模型 `Message`、日志 `Store` 接口与内存实现 `memoryLog`
-  - 分区 `Partition` 与广播订阅 `Subscription`(共享日志 + 独立游标 + ready 通知 + 关闭语义)
-  - 线程安全门面 `Broker`(`New`/`CreateTopic`/`Publish`/`Subscribe`/`Close`)管理多主题
-- 待做:协议编解码(protocol)→ TCP server/client(network)→ cmd/demo → benchmark → V0 收口(含 tag v0.1.0)
+- 已完成:
+  - `broker` 内核(单元测试 + `-race` 通过)——
+    - 消息模型 `Message`、日志 `Store` 接口与内存实现 `memoryLog`
+    - 分区 `Partition` 与广播订阅 `Subscription`(共享日志 + 独立游标 + ready 通知 + 关闭语义)
+    - 线程安全门面 `Broker`(`New`/`CreateTopic`/`Publish`/`Subscribe`/`Close`)管理多主题
+  - `protocol`:自研二进制帧与 payload 编解码(含 fuzz)
+- 待做:TCP server/client(network)→ cmd/demo → benchmark → V0 收口(含 tag v0.1.0)
 
 ## 设计目标
 
