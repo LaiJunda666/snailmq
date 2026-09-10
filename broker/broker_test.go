@@ -133,6 +133,14 @@ func TestBrokerConcurrentPublishConsistency(t *testing.T) {
 	}
 }
 
+// TestBrokerEmptyTopicName 验证空主题名返回哨兵 ErrTopicNameEmpty(可 errors.Is 判定)。
+func TestBrokerEmptyTopicName(t *testing.T) {
+	b := New()
+	if err := b.CreateTopic(""); !errors.Is(err, ErrTopicNameEmpty) {
+		t.Fatalf(`CreateTopic("") err = %v; want ErrTopicNameEmpty`, err)
+	}
+}
+
 // TestBrokerClosedErrorContext 验证关闭后门面返回的 ErrClosed 被包上
 // 操作与 topic 上下文,同时 errors.Is(err, ErrClosed) 仍成立。
 func TestBrokerClosedErrorContext(t *testing.T) {

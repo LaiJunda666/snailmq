@@ -26,6 +26,9 @@ type Subscription struct {
 //
 // 读与游标推进都在 partition.mu 内完成,保证"先发布先可见"的次序:
 // 一次发布要么被本批读到,要么在下次循环读到,绝不会漏读或乱序。
+//
+// ctx 取消返回 ctx.Err(),这只是"本次等待被打断",订阅仍然有效,可换 ctx 继续 Read;
+// 而 ErrClosed 表示订阅或分区已终结,之后 Read 会持续返回 ErrClosed。
 func (s *Subscription) Read(ctx context.Context, max int) ([]Message, error) {
 	if max <= 0 {
 		max = 1

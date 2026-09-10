@@ -61,7 +61,7 @@ func New(opts ...Option) *Broker {
 	return b
 }
 
-// CreateTopic 创建主题。同名返回 ErrTopicExists;空名返回错误;
+// CreateTopic 创建主题。同名返回 ErrTopicExists;空名返回 ErrTopicNameEmpty;
 // broker 已关闭返回包装后的 ErrClosed(可用 errors.Is 判断)。
 // 创建后才能对该主题 Publish / Subscribe。
 func (b *Broker) CreateTopic(name string) error {
@@ -73,7 +73,7 @@ func (b *Broker) CreateTopic(name string) error {
 	}
 
 	if name == "" {
-		return errors.New("broker: empty topic name")
+		return ErrTopicNameEmpty
 	}
 
 	if _, ok := b.topics[name]; ok {
