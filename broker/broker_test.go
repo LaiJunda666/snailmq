@@ -133,6 +133,27 @@ func TestBrokerConcurrentPublishConsistency(t *testing.T) {
 	}
 }
 
+// TestBrokerClosedErrorContext 验证关闭后门面返回的 ErrClosed 被包上
+// 操作与 topic 上下文,同时 errors.Is(err, ErrClosed) 仍成立。
+func TestBrokerClosedErrorContext(t *testing.T) {
+	b := New()
+	_ = b.CreateTopic("t")
+	_ = b.Close()
+
+	if err := b.CreateTopic("t"); !errors.Is(err, ErrClosed) || !strings.Contains(err.Error(), `"t"`) {
+		t.Fatalf("CreateTopic err = %v; want ErrClosed with topic context", err)
+	}
+	if _, err := b.Publish("t", []byte("x")); !errors.Is(err, ErrClosed) || !strings.Contains(err.Error(), `"t"`) {
+		t.Fatalf("Publish err = %v; want ErrClosed with topic context", err)
+	}
+	if _, err := b.Subscribe("t"); !errors.Is(err, ErrClosed) || !strings.Contains(err.Error(), `"t"`) {
+		t.Fatalf("Subscribe err = %v; want ErrClosed with topic context", err)
+	}
+	if err := b.Close(); !errors.Is(err, ErrClosed) {
+		t.Fatalf("2nd Close err = %v; want ErrClosed", err)
+	}
+}
+
 // TestBrokerConcurrentWakeAndClose 让一个阻塞中的订阅读者与多个生产者并发发布,
 // 发布结束后随即关闭订阅——在 -race 下压测唤醒 / 关闭路径:
 // 验证 reader 与 writer 并发无 data race、不重复、不丢已发布消息、无死锁。

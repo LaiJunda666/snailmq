@@ -15,6 +15,7 @@ package broker
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -61,13 +62,14 @@ func New(opts ...Option) *Broker {
 }
 
 // CreateTopic 创建主题。同名返回 ErrTopicExists;空名返回错误;
-// broker 已关闭返回 ErrClosed。创建后才能对该主题 Publish / Subscribe。
+// broker 已关闭返回包装后的 ErrClosed(可用 errors.Is 判断)。
+// 创建后才能对该主题 Publish / Subscribe。
 func (b *Broker) CreateTopic(name string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.closed {
-		return ErrClosed
+		return fmt.Errorf("broker: create topic %q: %w", name, ErrClosed)
 	}
 
 	if name == "" {
@@ -103,11 +105,11 @@ func (b *Broker) topic(name string) (*Topic, error) {
 // Publish 向主题追加一条消息并返回其 offset。
 // payload 以引用方式入队,广播订阅者共享其字节;
 // 调用方在 Publish 返回后不得修改或复用该切片内容。
-// 主题不存在返回 ErrTopicNotFound;broker 已关闭返回 ErrClosed。
+// 主题不存在返回 ErrTopicNotFound;broker 已关闭返回包装后的 ErrClosed(可用 errors.Is 判断)。
 func (b *Broker) Publish(topic string, payload []byte) (int64, error) {
 	t, err := b.topic(topic)
 	if err != nil {
-		return 0, err
+		return 0, wrapClosed("publish to", topic, err)
 	}
 
 	return t.partition.Publish(payload)
@@ -115,14 +117,23 @@ func (b *Broker) Publish(topic string, payload []byte) (int64, error) {
 
 // Subscribe 为主题注册一个新的广播订阅者(游标从 0 起,可读全量历史)。
 // 返回的 Subscription 同一时刻只能被单个 goroutine 消费(见 Subscription.Read)。
-// 主题不存在返回 ErrTopicNotFound;broker 已关闭返回 ErrClosed。
+// 主题不存在返回 ErrTopicNotFound;broker 已关闭返回包装后的 ErrClosed(可用 errors.Is 判断)。
 func (b *Broker) Subscribe(topic string) (*Subscription, error) {
 	t, err := b.topic(topic)
 	if err != nil {
-		return nil, err
+		return nil, wrapClosed("subscribe to", topic, err)
 	}
 
 	return t.partition.Subscribe()
+}
+
+// wrapClosed 仅在 err 为 ErrClosed 时补上操作与 topic 上下文,
+// 保留 errors.Is 判定能力;其它错误原样返回。
+func wrapClosed(op, topic string, err error) error {
+	if errors.Is(err, ErrClosed) {
+		return fmt.Errorf("broker: %s topic %q: %w", op, topic, err)
+	}
+	return err
 }
 
 // Close 关闭 broker:幂等,关闭所有主题的分区并唤醒其订阅者。
