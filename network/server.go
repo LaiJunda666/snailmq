@@ -11,9 +11,17 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/LaiJunda666/mq-lite/broker"
 	"github.com/LaiJunda666/mq-lite/protocol"
+)
+
+const (
+	// defaultReadTimeout 限制单次读帧(头 + payload)的等待时长,防空闲/慢速连接长期占用。
+	defaultReadTimeout = 30 * time.Second
+	// defaultWriteTimeout 限制单批推送的写入时长,写入超时则丢弃该慢订阅者连接。
+	defaultWriteTimeout = 30 * time.Second
 )
 
 // Server 是 mq-lite 的 TCP 服务端:每条连接一个 goroutine,
@@ -21,17 +29,21 @@ import (
 type Server struct {
 	broker *broker.Broker
 
-	mu     sync.Mutex
-	closed bool
-	conns  map[net.Conn]context.CancelFunc // 活跃连接及其取消函数,用于 Close 时唤醒
-	wg     sync.WaitGroup
+	mu           sync.Mutex
+	closed       bool
+	conns        map[net.Conn]context.CancelFunc // 活跃连接及其取消函数,用于 Close 时唤醒与关闭
+	wg           sync.WaitGroup
+	readTimeout  time.Duration // 0 表示不设读超时
+	writeTimeout time.Duration // 0 表示不设写超时
 }
 
-// NewServer 用给定内核门面构造服务端。
+// NewServer 用给定内核门面构造服务端,并启用默认读/写超时。
 func NewServer(b *broker.Broker) *Server {
 	return &Server{
-		broker: b,
-		conns:  make(map[net.Conn]context.CancelFunc),
+		broker:       b,
+		conns:        make(map[net.Conn]context.CancelFunc),
+		readTimeout:  defaultReadTimeout,
+		writeTimeout: defaultWriteTimeout,
 	}
 }
 
@@ -45,6 +57,8 @@ func (s *Server) Serve(ln net.Listener) error {
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
+		// 登记与启动必须在同一临界区内完成:否则 Close 可能在登记后、wg.Go 前
+		// 进入 Wait,导致 Wait 提前返回或违反 WaitGroup 的"Go 先于 Wait"约定。
 		s.mu.Lock()
 		if s.closed {
 			s.mu.Unlock()
@@ -53,15 +67,14 @@ func (s *Server) Serve(ln net.Listener) error {
 			return errors.New("network: server closed")
 		}
 		s.conns[conn] = cancel
-		s.mu.Unlock()
-
 		s.wg.Go(func() {
 			s.handleConn(ctx, conn)
 		})
+		s.mu.Unlock()
 	}
 }
 
-// Close 取消所有连接的上下文以唤醒阻塞中的推送流,并等待其退出。
+// Close 取消并关闭所有连接,唤醒阻塞中的读/写与推送流,并等待其退出。
 // 幂等:重复调用返回 nil;不关闭 listener(listener 归调用方所有)。
 func (s *Server) Close() error {
 	s.mu.Lock()
@@ -71,20 +84,24 @@ func (s *Server) Close() error {
 	}
 	s.closed = true
 	cancels := make([]context.CancelFunc, 0, len(s.conns))
-	for _, cancel := range s.conns {
+	conns := make([]net.Conn, 0, len(s.conns))
+	for conn, cancel := range s.conns {
+		conns = append(conns, conn)
 		cancels = append(cancels, cancel)
 	}
 	s.mu.Unlock()
 
-	for _, cancel := range cancels {
-		cancel()
+	// 关连接可中断阻塞在 ReadHeader / Write 上的 goroutine;cancel 唤醒阻塞在 sub.Read 上的推送流。
+	for i, conn := range conns {
+		cancels[i]()
+		_ = conn.Close()
 	}
 	s.wg.Wait()
 	return nil
 }
 
 // handleConn 循环处理一条连接的请求帧;一旦收到 OpSubscribe 并成功,
-// 该连接转为推送流(stream)并在返回时关闭连接。
+// 该连接转为推送流(stream)并在返回时关闭连接与订阅。
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	defer s.removeConn(conn)
@@ -93,8 +110,14 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	bw := bufio.NewWriter(conn)
 
 	for {
+		if !s.armRead(conn) {
+			return
+		}
 		op, plen, err := protocol.ReadHeader(br)
 		if err != nil {
+			return
+		}
+		if !s.armRead(conn) {
 			return
 		}
 		payload := make([]byte, plen)
@@ -127,11 +150,30 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 				}
 				continue
 			}
+			// 推送相位不再需要读超时:清掉 deadline,交由"对端断开监视"决定生命周期。
+			_ = conn.SetReadDeadline(time.Time{})
+
+			subCtx, subCancel := context.WithCancel(ctx)
+			defer subCancel()
+			// 连接结束(客户断开/写失败/服务端 Close/分区关闭)时注销订阅,避免 Partition.subs 泄漏。
+			defer func() { _ = sub.Close() }()
+			// 监视对端:客户端关闭连接(EOF)或发来异常数据时取消 subCtx,
+			// 从而唤醒阻塞在 sub.Read 上的推送流并清理订阅。
+			go func() {
+				defer subCancel()
+				var buf [256]byte
+				for {
+					if _, err := conn.Read(buf[:]); err != nil {
+						return
+					}
+				}
+			}()
+
 			if err := s.respond(bw, op, nil, nil); err != nil {
 				return
 			}
 			// 连接语义变为单向推送流:只读内核、写帧,直到连接关闭 / 服务端 Close / 订阅关闭。
-			s.stream(ctx, bw, sub)
+			s.stream(subCtx, conn, bw, sub)
 			return
 		default:
 			// 客户端不应主动发 OpMessage / OpError,忽略。
@@ -140,9 +182,9 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// stream 从订阅读取消息并逐帧推送给客户端,直到 ctx 取消、订阅/分区关闭或写失败,
+// stream 从订阅读取消息并逐帧推送给客户端,直到 ctx 取消、订阅/分区关闭或写超时/写失败,
 // 然后返回;调用方据此结束该连接。
-func (s *Server) stream(ctx context.Context, bw *bufio.Writer, sub *broker.Subscription) {
+func (s *Server) stream(ctx context.Context, conn net.Conn, bw *bufio.Writer, sub *broker.Subscription) {
 	const batch = 64
 	for {
 		msgs, err := sub.Read(ctx, batch)
@@ -154,6 +196,9 @@ func (s *Server) stream(ctx context.Context, bw *bufio.Writer, sub *broker.Subsc
 			if _, err := bw.Write(frame); err != nil {
 				return
 			}
+		}
+		if !s.armWrite(conn) {
+			return
 		}
 		if err := bw.Flush(); err != nil {
 			return
@@ -177,6 +222,22 @@ func (s *Server) respond(bw *bufio.Writer, op protocol.Opcode, err error, body [
 	return bw.Flush()
 }
 
+// armRead 按配置设置读 deadline;返回 false 表示连接应结束(无超时配置时恒 true)。
+func (s *Server) armRead(conn net.Conn) bool {
+	if s.readTimeout <= 0 {
+		return true
+	}
+	return conn.SetReadDeadline(time.Now().Add(s.readTimeout)) == nil
+}
+
+// armWrite 按配置设置写 deadline;返回 false 表示连接应结束。
+func (s *Server) armWrite(conn net.Conn) bool {
+	if s.writeTimeout <= 0 {
+		return true
+	}
+	return conn.SetWriteDeadline(time.Now().Add(s.writeTimeout)) == nil
+}
+
 // removeConn 注销连接并触发其取消(handleConn 退出时调用)。
 func (s *Server) removeConn(conn net.Conn) {
 	s.mu.Lock()
@@ -185,4 +246,11 @@ func (s *Server) removeConn(conn net.Conn) {
 		delete(s.conns, conn)
 	}
 	s.mu.Unlock()
+}
+
+// connCount 返回当前活跃连接数(测试用于等待连接处理 goroutine 退出)。
+func (s *Server) connCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.conns)
 }
