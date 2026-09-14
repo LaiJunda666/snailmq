@@ -60,9 +60,11 @@ func ReadHeader(r io.Reader) (Opcode, int, error) {
 		return 0, 0, ErrBadVersion
 	}
 	op := Opcode(hdr[3])
-	payloadLen := int(binary.LittleEndian.Uint32(hdr[4:8]))
+	// 先按 uint32 比较再转 int:32 位平台上 uint32 大值转 int 会变负数,
+	// 直接转后再比较会绕过上限检查并导致下游 make 负长度 panic。
+	payloadLen := binary.LittleEndian.Uint32(hdr[4:8])
 	if payloadLen > MaxPayload {
 		return 0, 0, ErrTooLarge
 	}
-	return op, payloadLen, nil
+	return op, int(payloadLen), nil
 }

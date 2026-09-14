@@ -44,6 +44,20 @@ func TestReadHeaderBadVersion(t *testing.T) {
 	}
 }
 
+// TestReadHeaderTooLarge 验证超长 payloadLen 被 ErrTooLarge 拒绝。
+// 覆盖 32 位平台隐患:uint32 大值(0xFFFFFFFF)不得因转 int 变负而绕过检查。
+func TestReadHeaderTooLarge(t *testing.T) {
+	cases := map[string][]byte{
+		"max+1":      {0x51, 0x4D, 1, 1, 0x01, 0x00, 0x00, 0x01}, // 16MiB+1
+		"uint32 max": {0x51, 0x4D, 1, 1, 0xFF, 0xFF, 0xFF, 0xFF}, // 0xFFFFFFFF
+	}
+	for name, hdr := range cases {
+		if _, _, err := ReadHeader(bytes.NewReader(hdr)); !errors.Is(err, ErrTooLarge) {
+			t.Fatalf("%s: err = %v; want ErrTooLarge", name, err)
+		}
+	}
+}
+
 // TestPublishRoundTrip 验证 Publish payload(含中文 topic)编解码对称。
 func TestPublishRoundTrip(t *testing.T) {
 	body := EncodePublish("orders.中文", []byte("payload"))
