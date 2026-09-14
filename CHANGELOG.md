@@ -16,14 +16,19 @@
 - broker:线程安全门面 `Broker`(`New`/`CreateTopic`/`Publish`/`Subscribe`/`Close`)管理多主题
 - protocol:二进制帧与 payload 编解码(Magic/Version/Opcode、防截断与长度上限,含 fuzz)
 - broker:空主题名哨兵 `ErrTopicNameEmpty`
+- network:标准库 TCP server(每连接 goroutine,订阅成功后连接转为单向推送流)
 
 ### 变更
 
 - broker:`Close` 统一为幂等语义,重复调用返回 nil
 - broker:门面返回的 `ErrClosed` 附加操作与 topic 上下文(`errors.Is` 判定仍成立)
+- network:连接读 / 写超时(默认 30s):空闲连接自动关闭,写入超时的慢订阅者被丢弃
 
 ### 修复
 
 - broker:`Store.Read` 在超大 `max` 下整数溢出导致 panic,现按日志剩余夹紧
 - broker:`memoryLog` 移除内部锁,并发安全统一由分区持锁串行保证,消除双重加锁
 - broker:`New` 对 `WithStoreFactory(nil)` 回退默认内存后端,不再 nil 调用 panic
+- network:`Server.Close` 现在关闭连接,空闲 / 慢客户端下不再挂起
+- network:订阅连接结束(客户端断开、写失败、Close)时自动注销订阅,不再泄漏 `Partition.subs`
+- network:`Serve` 与 `Close` 的 WaitGroup 登记移入临界区,消除登记与等待的竞态
