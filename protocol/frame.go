@@ -68,3 +68,23 @@ func ReadHeader(r io.Reader) (Opcode, int, error) {
 	}
 	return op, int(payloadLen), nil
 }
+
+// ReadFrame 读取完整一帧:定长头 + payload,是 ReadHeader 之上的便捷封装。
+// 头非法或 payload 截断时返回相应错误(后者为 ErrTruncated)。
+func ReadFrame(r io.Reader) (Opcode, []byte, error) {
+	op, n, err := ReadHeader(r)
+	if err != nil {
+		return 0, nil, err
+	}
+	payload := make([]byte, n)
+	if _, err := io.ReadFull(r, payload); err != nil {
+		return 0, nil, ErrTruncated
+	}
+	return op, payload, nil
+}
+
+// WriteFrame 写入完整一帧。不负责 flush;调用方(如 bufio.Writer 使用者)按需 flush。
+func WriteFrame(w io.Writer, op Opcode, payload []byte) error {
+	_, err := w.Write(EncodeFrame(op, payload))
+	return err
+}
