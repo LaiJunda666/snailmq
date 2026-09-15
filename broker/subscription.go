@@ -5,8 +5,9 @@ import "context"
 // Subscription 是单个分区上的一个广播订阅者,维护独立游标(offset)。
 //
 // 并发模型:
-//   - offset 只被本订阅的单个读 goroutine 访问,无需原子或加锁;
-//   - 所有与分区的交互(读日志、判断关闭态)都在 partition.mu 下完成;
+//   - offset 逻辑上只被本订阅的单个读 goroutine 访问(无共享);
+//   - 其读写与"读日志、判断关闭态"一起在 partition.mu 下完成:锁保护的是分区状态,
+//     offset 借此与日志进度保持一致,而非单独为 offset 加锁;
 //   - 唤醒 / 关闭信号分别经 ready、done 通道传递。
 type Subscription struct {
 	partition *Partition

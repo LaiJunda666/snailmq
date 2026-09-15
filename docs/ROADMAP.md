@@ -18,13 +18,21 @@
 
 每订阅者维护已确认游标 + 待确认窗口;Ack/Commit;超时重投;at-least-once 语义文档化。
 
+- 接缝:新增 `Subscription.Ack(offset)`(读游标与提交游标分离);读逻辑收进 `Partition.read`,便于挂载 ack/in-flight 状态。
+- 协议:`OpError` 引入稳定错误码(如 `[u16 code][msg]`),客户端可程序化判定(V0 协议尚未对外冻结,是改动时机)。
+
 ## V2 — consumer group 竞争消费
 
 无组广播 与 组竞争并存;分区在组成员间分配;心跳超时触发分区接管。
 
+- 接缝:预留 key 分区能力(`CreateTopic(name, WithPartitions(n))`、`Publish(topic, key, payload)`);组位点用独立 `OffsetStore`/`MetaStore`,不复用消息 `Store`。
+
 ## V3 — WAL 持久化
 
 store 磁盘后端:append-only 顺序写、分段文件 + 索引、尾部截断恢复;fsync 策略;段清理。
+
+- `Store` 接口扩为含 `Close`/`FirstOffset`,工厂改为 `func() (Store, error)`(open 失败可在创建期返回)。
+- 去掉 `offset == index` 假设(截断/retention 前必须完成);`CreateTopic` 的 store 构造移出 broker 全局锁。
 
 ## V4 — raft 集群
 
