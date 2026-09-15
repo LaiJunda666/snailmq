@@ -141,6 +141,33 @@ func TestBrokerEmptyTopicName(t *testing.T) {
 	}
 }
 
+// TestBrokerSubscriberCount 验证只读订阅计数:订阅 +1,关闭 -1,未知主题报错。
+func TestBrokerSubscriberCount(t *testing.T) {
+	b := New()
+	if err := b.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := b.SubscriberCount("t"); err != nil || n != 0 {
+		t.Fatalf("count = %d, %v; want 0, nil", n, err)
+	}
+	s, err := b.Subscribe("t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := b.SubscriberCount("t"); err != nil || n != 1 {
+		t.Fatalf("count = %d, %v; want 1, nil", n, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := b.SubscriberCount("t"); err != nil || n != 0 {
+		t.Fatalf("count after close = %d, %v; want 0, nil", n, err)
+	}
+	if _, err := b.SubscriberCount("nope"); !errors.Is(err, ErrTopicNotFound) {
+		t.Fatalf("unknown topic err = %v; want ErrTopicNotFound", err)
+	}
+}
+
 // TestBrokerClosedErrorContext 验证关闭后门面返回的 ErrClosed 被包上
 // 操作与 topic 上下文,同时 errors.Is(err, ErrClosed) 仍成立。
 func TestBrokerClosedErrorContext(t *testing.T) {

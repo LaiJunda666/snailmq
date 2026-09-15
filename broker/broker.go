@@ -127,6 +127,16 @@ func (b *Broker) Subscribe(topic string) (*Subscription, error) {
 	return t.partition.Subscribe()
 }
 
+// SubscriberCount 返回指定主题当前的订阅者数量,用于观测与测试(只读)。
+// 主题不存在返回 ErrTopicNotFound;broker 已关闭返回包装后的 ErrClosed。
+func (b *Broker) SubscriberCount(topic string) (int, error) {
+	t, err := b.topic(topic)
+	if err != nil {
+		return 0, wrapClosed("count subscribers of", topic, err)
+	}
+	return t.partition.subscriberCount(), nil
+}
+
 // wrapClosed 仅在 err 为 ErrClosed 时补上操作与 topic 上下文,
 // 保留 errors.Is 判定能力;其它错误原样返回。
 func wrapClosed(op, topic string, err error) error {

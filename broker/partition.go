@@ -69,6 +69,13 @@ func (p *Partition) Subscribe() (*Subscription, error) {
 	return s, nil
 }
 
+// subscriberCount 返回当前订阅者数量(供 Broker 暴露只读计数)。
+func (p *Partition) subscriberCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.subs)
+}
+
 // unsubscribe 注销一个订阅者:先从集合移除,再关闭其 done 通道以唤醒阻塞中的 Read。
 // 幂等:若订阅者已不在集合(例如分区关闭时已被整体移除),则什么都不做。
 func (p *Partition) unsubscribe(s *Subscription) {

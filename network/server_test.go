@@ -3,7 +3,6 @@ package network
 import (
 	"bufio"
 	"net"
-	"reflect"
 	"testing"
 	"time"
 
@@ -43,17 +42,11 @@ func dial(t *testing.T, addr string) net.Conn {
 // readFrame 读取一个完整帧,返回 opcode 与 payload。
 func readFrame(t *testing.T, br *bufio.Reader) (protocol.Opcode, []byte) {
 	t.Helper()
-	op, n, err := protocol.ReadHeader(br)
+	op, payload, err := protocol.ReadFrame(br)
 	if err != nil {
-		t.Fatalf("ReadHeader: %v", err)
+		t.Fatalf("ReadFrame: %v", err)
 	}
-	body := make([]byte, n)
-	if n > 0 {
-		if _, err := br.Read(body); err != nil {
-			t.Fatalf("read body: %v", err)
-		}
-	}
-	return op, body
+	return op, payload
 }
 
 // TestServerRejectsBadMagic 裸连发送坏帧头,验证服务端按协议拒绝并断开连接。
@@ -130,8 +123,7 @@ func TestServerCloseReturnsWithIdleConn(t *testing.T) {
 // TestServerReadTimeoutClosesIdleConn 验证空闲连接会因读超时被关闭(M2 缓解回归)。
 func TestServerReadTimeoutClosesIdleConn(t *testing.T) {
 	b := broker.New()
-	srv := NewServer(b)
-	srv.readTimeout = 50 * time.Millisecond
+	srv := NewServer(b, WithReadTimeout(50*time.Millisecond))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -175,20 +167,7 @@ func TestSubscriptionClosedOnClientDisconnect(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got := subscriptionCount(t, b); got != 0 {
-		t.Fatalf("subscription leaked after client disconnect: subs = %d", got)
+	if got, err := b.SubscriberCount("t"); err != nil || got != 0 {
+		t.Fatalf("subscription leaked after client disconnect: count = %d, %v; want 0, nil", got, err)
 	}
-}
-
-// subscriptionCount 只读地统计 Broker 各分区上的订阅数(用于泄漏回归,测试专用)。
-func subscriptionCount(t *testing.T, b *broker.Broker) int {
-	t.Helper()
-	v := reflect.ValueOf(b).Elem()
-	topics := v.FieldByName("topics")
-	total := 0
-	for _, key := range topics.MapKeys() {
-		partition := topics.MapIndex(key).Elem().FieldByName("partition").Elem()
-		total += partition.FieldByName("subs").Len()
-	}
-	return total
 }

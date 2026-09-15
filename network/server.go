@@ -1,4 +1,4 @@
-// Package network 提供 mq-lite 的标准库 TCP 服务端与客户端。
+// Package network 提供 mq-lite 的标准库 TCP 服务端(客户端将在同一包内后续加入)。
 //
 // 帧编解码复用 protocol 包,业务调用 broker 门面;依赖方向为 network → broker + protocol,
 // broker 不反向依赖 network。服务端每连接一个 goroutine,订阅成功后该连接转为单向推送流。
@@ -8,7 +8,6 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"io"
 	"net"
 	"sync"
 	"time"
@@ -37,14 +36,31 @@ type Server struct {
 	writeTimeout time.Duration // 0 表示不设写超时
 }
 
+// ServerOption 配置 Server,仅应在 NewServer 时传入。
+type ServerOption func(*Server)
+
+// WithReadTimeout 设置单次读帧的等待超时(0 表示不设)。
+func WithReadTimeout(d time.Duration) ServerOption {
+	return func(s *Server) { s.readTimeout = d }
+}
+
+// WithWriteTimeout 设置单批推送的写入超时(0 表示不设)。
+func WithWriteTimeout(d time.Duration) ServerOption {
+	return func(s *Server) { s.writeTimeout = d }
+}
+
 // NewServer 用给定内核门面构造服务端,并启用默认读/写超时。
-func NewServer(b *broker.Broker) *Server {
-	return &Server{
+func NewServer(b *broker.Broker, opts ...ServerOption) *Server {
+	s := &Server{
 		broker:       b,
 		conns:        make(map[net.Conn]context.CancelFunc),
 		readTimeout:  defaultReadTimeout,
 		writeTimeout: defaultWriteTimeout,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Serve 阻塞地 accept 连接并为每条连接起一个 goroutine。
@@ -113,15 +129,8 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		if !s.armRead(conn) {
 			return
 		}
-		op, plen, err := protocol.ReadHeader(br)
+		op, payload, err := protocol.ReadFrame(br)
 		if err != nil {
-			return
-		}
-		if !s.armRead(conn) {
-			return
-		}
-		payload := make([]byte, plen)
-		if _, err := io.ReadFull(br, payload); err != nil {
 			return
 		}
 
@@ -192,8 +201,8 @@ func (s *Server) stream(ctx context.Context, conn net.Conn, bw *bufio.Writer, su
 			return
 		}
 		for _, m := range msgs {
-			frame := protocol.EncodeFrame(protocol.OpMessage, protocol.EncodeMessage(m.Offset, m.Payload))
-			if _, err := bw.Write(frame); err != nil {
+			frame := protocol.EncodeMessage(m.Offset, m.Payload)
+			if err := protocol.WriteFrame(bw, protocol.OpMessage, frame); err != nil {
 				return
 			}
 		}
@@ -216,7 +225,7 @@ func (s *Server) respond(bw *bufio.Writer, op protocol.Opcode, err error, body [
 	} else {
 		payload = body
 	}
-	if _, werr := bw.Write(protocol.EncodeFrame(op, payload)); werr != nil {
+	if werr := protocol.WriteFrame(bw, op, payload); werr != nil {
 		return werr
 	}
 	return bw.Flush()
