@@ -17,6 +17,7 @@
 - protocol:二进制帧与 payload 编解码(Magic/Version/Opcode、防截断与长度上限,含 fuzz)
 - broker:空主题名哨兵 `ErrTopicNameEmpty`
 - network:标准库 TCP server(每连接 goroutine,订阅成功后连接转为单向推送流)
+- network:标准库 TCP 客户端 `Dial`/`CreateTopic`/`Publish`/`Subscribe`/`Close` 与端到端测试
 
 ### 变更
 

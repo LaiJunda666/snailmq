@@ -12,8 +12,8 @@ V0 最小闭环进行中;工程骨架(Makefile / CI / AGENTS / 架构·协议·�
     - 分区 `Partition` 与广播订阅 `Subscription`(共享日志 + 独立游标 + ready 通知 + 关闭语义)
     - 线程安全门面 `Broker`(`New`/`CreateTopic`/`Publish`/`Subscribe`/`Close`)管理多主题
   - `protocol`:自研二进制帧与 payload 编解码(含 fuzz)
-  - `network`:标准库 TCP 服务端(每连接 goroutine;订阅后转推送流;读写超时)
-- 待做:TCP 客户端(network)→ cmd/demo → benchmark → V0 收口(含 tag v0.1.0)
+  - `network`:标准库 TCP 服务端与客户端(订阅后转推送流;读写超时;端到端测试)
+- 待做:cmd/demo → benchmark → V0 收口(含 tag v0.1.0)
 
 ## 设计目标
 
