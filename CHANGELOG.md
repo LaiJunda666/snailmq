@@ -18,12 +18,14 @@
 - broker:空主题名哨兵 `ErrTopicNameEmpty`
 - network:标准库 TCP server(每连接 goroutine,订阅成功后连接转为单向推送流)
 - network:标准库 TCP 客户端 `Dial`/`CreateTopic`/`Publish`/`Subscribe`/`Close` 与端到端测试
+- cmd/demo:一键演示(起 server + 双订阅者广播 10 万条,打印吞吐)
 
 ### 变更
 
 - broker:`Close` 统一为幂等语义,重复调用返回 nil
 - broker:门面返回的 `ErrClosed` 附加操作与 topic 上下文(`errors.Is` 判定仍成立)
 - network:连接读 / 写超时(默认 30s):空闲连接自动关闭,写入超时的慢订阅者被丢弃
+- network:`Dial` 增加默认 5s 连接超时,并提供 `DialTimeout`
 
 ### 修复
 
