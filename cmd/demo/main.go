@@ -73,9 +73,14 @@ func run() error {
 		}(id)
 	}
 
-	// 等两个订阅者都订阅成功再开始发布。
-	<-ready
-	<-ready
+	// 等两个订阅者都订阅成功再开始发布;任一失败则立即返回,避免永久阻塞。
+	for range 2 {
+		select {
+		case <-ready:
+		case err := <-errCh:
+			return err
+		}
+	}
 
 	start := time.Now()
 	for j := range total {
