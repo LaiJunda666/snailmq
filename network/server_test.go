@@ -2,6 +2,8 @@ package network
 
 import (
 	"bufio"
+	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -9,6 +11,13 @@ import (
 	"github.com/LaiJunda666/mq-lite/broker"
 	"github.com/LaiJunda666/mq-lite/protocol"
 )
+
+// connCount 返回当前活跃连接数(测试用于等待连接处理 goroutine 退出)。
+func (s *Server) connCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.conns)
+}
 
 // startServer 起一个监听随机端口的 Server,并注册清理;返回地址、服务端与内核。
 func startServer(t *testing.T) (string, *Server, *broker.Broker) {
@@ -59,8 +68,8 @@ func TestServerRejectsBadMagic(t *testing.T) {
 	}
 
 	buf := make([]byte, 1)
-	if _, err := conn.Read(buf); err == nil {
-		t.Fatal("expected connection close after bad magic")
+	if _, err := conn.Read(buf); !errors.Is(err, io.EOF) {
+		t.Fatalf("read after bad magic = %v; want io.EOF (server closed)", err)
 	}
 }
 
@@ -136,8 +145,122 @@ func TestServerReadTimeoutClosesIdleConn(t *testing.T) {
 
 	conn := dial(t, ln.Addr().String())
 	buf := make([]byte, 1)
-	if _, err := conn.Read(buf); err == nil {
-		t.Fatal("expected idle connection to be closed by read timeout")
+	if _, err := conn.Read(buf); !errors.Is(err, io.EOF) {
+		t.Fatalf("read on idle conn = %v; want io.EOF (server closed on read timeout)", err)
+	}
+}
+
+// TestServerWriteDeadlineFreshPerBatch 验证空闲超过 writeTimeout 后收到大批量推送仍能送达(H1 回归):
+// 写 deadline 必须在整批写入前刷新,而非写完之后。
+func TestServerWriteDeadlineFreshPerBatch(t *testing.T) {
+	b := broker.New()
+	srv := NewServer(b, WithWriteTimeout(80*time.Millisecond))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = srv.Close()
+		_ = ln.Close()
+	})
+	addr := ln.Addr().String()
+
+	if err := b.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+
+	subConn := dial(t, addr)
+	subReader := bufio.NewReader(subConn)
+	if _, err := subConn.Write(protocol.EncodeFrame(protocol.OpSubscribe, []byte("t"))); err != nil {
+		t.Fatal(err)
+	}
+	if op, _ := readFrame(t, subReader); op != protocol.OpSubscribe {
+		t.Fatalf("subscribe resp op=%d", op)
+	}
+
+	// 空闲超过 writeTimeout,使上一轮 deadline 过期。
+	time.Sleep(250 * time.Millisecond)
+
+	payload := make([]byte, 16<<10) // 超过 bufio 4KiB 缓冲,触发批内底层写
+	pub := mustDial(t, addr)
+	if _, err := pub.Publish("t", payload); err != nil {
+		t.Fatal(err)
+	}
+
+	op, body := readFrame(t, subReader)
+	if op != protocol.OpMessage {
+		t.Fatalf("push op=%d; want OpMessage", op)
+	}
+	_, got, err := protocol.DecodeMessage(body)
+	if err != nil || len(got) != len(payload) {
+		t.Fatalf("pushed payload len=%d err=%v; want %d", len(got), err, len(payload))
+	}
+}
+
+// stubAddr 是 singleConnListener 的占位地址。
+type stubAddr struct{}
+
+func (stubAddr) Network() string { return "pipe" }
+func (stubAddr) String() string  { return "pipe" }
+
+// singleConnListener 只返回一条预置连接,之后的 Accept 阻塞到 Close。
+type singleConnListener struct {
+	conn net.Conn
+	done chan struct{}
+}
+
+func newSingleConnListener(conn net.Conn) *singleConnListener {
+	return &singleConnListener{conn: conn, done: make(chan struct{})}
+}
+
+func (l *singleConnListener) Accept() (net.Conn, error) {
+	if l.conn != nil {
+		conn := l.conn
+		l.conn = nil
+		return conn, nil
+	}
+	<-l.done
+	return nil, errors.New("network: listener closed")
+}
+
+func (l *singleConnListener) Close() error {
+	close(l.done)
+	return nil
+}
+
+func (l *singleConnListener) Addr() net.Addr { return stubAddr{} }
+
+// TestServerRequestWriteTimeoutClosesStalledClient 验证请求-响应阶段也有写超时:
+// 客户端不读响应时,服务端写阻塞会因 writeTimeout 被清退,不会永久钉住 goroutine(M1 回归)。
+// 用 net.Pipe 制造确定性写阻塞(TCP 缓冲会自适应放大,不可靠)。
+func TestServerRequestWriteTimeoutClosesStalledClient(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	t.Cleanup(func() { _ = clientConn.Close() })
+
+	b := broker.New()
+	srv := NewServer(b, WithWriteTimeout(100*time.Millisecond))
+	ln := newSingleConnListener(serverConn)
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = srv.Close()
+		_ = ln.Close()
+	})
+	if err := b.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 发一个请求但从不读响应:服务端 respond 的管道写会阻塞。
+	bw := bufio.NewWriter(clientConn)
+	_ = protocol.WriteFrame(bw, protocol.OpPublish, protocol.EncodePublish("t", []byte("x")))
+	_ = bw.Flush()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for srv.connCount() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("server kept stalled client: no write deadline in request phase")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

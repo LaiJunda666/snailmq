@@ -1,10 +1,12 @@
 package network
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/LaiJunda666/mq-lite/broker"
+	"github.com/LaiJunda666/mq-lite/protocol"
 )
 
 // mustDial 连接服务端并在测试结束时关闭。
@@ -138,5 +140,46 @@ func TestClientSubscriptionReceivesLateMessage(t *testing.T) {
 		t.Fatalf("Read err: %v", err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for late message")
+	}
+}
+
+// TestClientRejectsRequestsAfterSubscribe 验证进入推送流后,再次订阅/发布/建 topic
+// 返回 ErrStreaming,而不是把推送帧当成响应吞掉(M2 回归)。
+func TestClientRejectsRequestsAfterSubscribe(t *testing.T) {
+	addr, _, _ := startServer(t)
+	setup := mustDial(t, addr)
+	if err := setup.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+
+	c := mustDial(t, addr)
+	if _, err := c.Subscribe("t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Subscribe("t"); !errors.Is(err, ErrStreaming) {
+		t.Fatalf("2nd Subscribe err = %v; want ErrStreaming", err)
+	}
+	if _, err := c.Publish("t", []byte("x")); !errors.Is(err, ErrStreaming) {
+		t.Fatalf("Publish after Subscribe err = %v; want ErrStreaming", err)
+	}
+	if err := c.CreateTopic("t2"); !errors.Is(err, ErrStreaming) {
+		t.Fatalf("CreateTopic after Subscribe err = %v; want ErrStreaming", err)
+	}
+}
+
+// TestClientPublishTooLargeRejectedLocally 验证超大 payload 在本地被拒(ErrTooLarge),
+// 不写出非法帧、不断连,之后仍可正常发布(L1 回归)。
+func TestClientPublishTooLargeRejectedLocally(t *testing.T) {
+	addr, _, _ := startServer(t)
+	c := mustDial(t, addr)
+	if err := c.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.Publish("t", make([]byte, protocol.MaxPayload+1)); !errors.Is(err, protocol.ErrTooLarge) {
+		t.Fatalf("oversized Publish err = %v; want protocol.ErrTooLarge", err)
+	}
+	if _, err := c.Publish("t", []byte("ok")); err != nil {
+		t.Fatalf("Publish after rejection err = %v; want nil (connection still usable)", err)
 	}
 }

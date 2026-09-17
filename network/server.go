@@ -1,4 +1,4 @@
-// Package network 提供 mq-lite 的标准库 TCP 服务端(客户端将在同一包内后续加入)。
+// Package network 提供 mq-lite 的标准库 TCP 服务端与客户端(客户端见 client.go)。
 //
 // 帧编解码复用 protocol 包,业务调用 broker 门面;依赖方向为 network → broker + protocol,
 // broker 不反向依赖 network。服务端每连接一个 goroutine,订阅成功后该连接转为单向推送流。
@@ -131,30 +131,34 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 		}
 		op, payload, err := protocol.ReadFrame(br)
 		if err != nil {
+			// 超大帧:回 OpError 让对端有明确反馈,再断开(剩余 payload 不读,直接关连接)。
+			if errors.Is(err, protocol.ErrTooLarge) {
+				_ = s.respond(conn, bw, protocol.OpError, protocol.ErrTooLarge, nil)
+			}
 			return
 		}
 
 		switch op {
 		case protocol.OpCreateTopic:
-			if err := s.respond(bw, op, s.broker.CreateTopic(string(payload)), nil); err != nil {
+			if err := s.respond(conn, bw, op, s.broker.CreateTopic(string(payload)), nil); err != nil {
 				return
 			}
 		case protocol.OpPublish:
 			topic, msg, derr := protocol.DecodePublish(payload)
 			if derr != nil {
-				if err := s.respond(bw, op, derr, nil); err != nil {
+				if err := s.respond(conn, bw, op, derr, nil); err != nil {
 					return
 				}
 				continue
 			}
 			off, perr := s.broker.Publish(topic, msg)
-			if err := s.respond(bw, op, perr, protocol.MarshalOffset(off)); err != nil {
+			if err := s.respond(conn, bw, op, perr, protocol.MarshalOffset(off)); err != nil {
 				return
 			}
 		case protocol.OpSubscribe:
 			sub, serr := s.broker.Subscribe(string(payload))
 			if serr != nil {
-				if err := s.respond(bw, op, serr, nil); err != nil {
+				if err := s.respond(conn, bw, op, serr, nil); err != nil {
 					return
 				}
 				continue
@@ -178,7 +182,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 				}
 			}()
 
-			if err := s.respond(bw, op, nil, nil); err != nil {
+			if err := s.respond(conn, bw, op, nil, nil); err != nil {
 				return
 			}
 			// 连接语义变为单向推送流:只读内核、写帧,直到连接关闭 / 服务端 Close / 订阅关闭。
@@ -200,14 +204,16 @@ func (s *Server) stream(ctx context.Context, conn net.Conn, bw *bufio.Writer, su
 		if err != nil {
 			return
 		}
+		// 写 deadline 必须在整批写入之前设置:bufio 缓冲超过 4KiB 时会在循环内触发底层写,
+		// 若沿用上一轮(可能已过期)的 deadline,空闲后的正常订阅者会被误判为慢客户端而断连。
+		if !s.armWrite(conn) {
+			return
+		}
 		for _, m := range msgs {
 			frame := protocol.EncodeMessage(m.Offset, m.Payload)
 			if err := protocol.WriteFrame(bw, protocol.OpMessage, frame); err != nil {
 				return
 			}
-		}
-		if !s.armWrite(conn) {
-			return
 		}
 		if err := bw.Flush(); err != nil {
 			return
@@ -217,7 +223,11 @@ func (s *Server) stream(ctx context.Context, conn net.Conn, bw *bufio.Writer, su
 
 // respond 写一个响应帧:成功时回与请求相同的 opcode 与 body;
 // 失败时回 OpError,payload 为错误文本。返回写错误,调用方据此结束连接。
-func (s *Server) respond(bw *bufio.Writer, op protocol.Opcode, err error, body []byte) error {
+// 写前设置写 deadline,避免不读响应的客户端把 goroutine 永久钉在写阻塞上。
+func (s *Server) respond(conn net.Conn, bw *bufio.Writer, op protocol.Opcode, err error, body []byte) error {
+	if !s.armWrite(conn) {
+		return errors.New("network: set write deadline failed")
+	}
 	var payload []byte
 	if err != nil {
 		op = protocol.OpError
@@ -255,11 +265,4 @@ func (s *Server) removeConn(conn net.Conn) {
 		delete(s.conns, conn)
 	}
 	s.mu.Unlock()
-}
-
-// connCount 返回当前活跃连接数(测试用于等待连接处理 goroutine 退出)。
-func (s *Server) connCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.conns)
 }

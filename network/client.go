@@ -11,15 +11,20 @@ import (
 	"github.com/LaiJunda666/mq-lite/protocol"
 )
 
+// ErrStreaming 表示客户端已订阅、连接进入推送流状态,不能再发起请求。
+var ErrStreaming = errors.New("network: client is in streaming mode")
+
 // Client 是官方 Go 客户端(单连接)。
 //
 // 订阅前走"请求-响应";调用 Subscribe 成功后,该连接转为该订阅的推送流,
-// 之后只能通过 Subscription.Read 读取推送,不能再发其他请求。
+// 之后只能通过 Subscription.Read 读取推送,不能再发其他请求(会返回 ErrStreaming)。
 type Client struct {
 	mu   sync.Mutex
 	conn net.Conn
 	br   *bufio.Reader
 	bw   *bufio.Writer
+
+	streaming bool // 是否已进入推送流(受 mu 保护)
 
 	closeOnce sync.Once
 	closeErr  error
@@ -54,10 +59,18 @@ func (c *Client) Publish(topic string, payload []byte) (int64, error) {
 }
 
 // Subscribe 订阅主题;成功后本连接的语义变为单向推送流。
+// 重复订阅或在推送流状态下发起请求会返回 ErrStreaming。
 func (c *Client) Subscribe(topic string) (*Subscription, error) {
-	if _, err := c.roundTrip(protocol.OpSubscribe, []byte(topic)); err != nil {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.streaming {
+		return nil, ErrStreaming
+	}
+	if _, err := c.roundTripLocked(protocol.OpSubscribe, []byte(topic)); err != nil {
 		return nil, err
 	}
+	c.streaming = true
 	return &Subscription{c: c}, nil
 }
 
@@ -69,12 +82,19 @@ func (c *Client) Close() error {
 	return c.closeErr
 }
 
-// roundTrip 串行地发送请求帧并读取同序响应帧。
-// 连接转为推送流(Subscribe 成功)后不得再调用。
+// roundTrip 串行地发送请求帧并读取同序响应帧;已进入推送流后拒绝请求。
 func (c *Client) roundTrip(op protocol.Opcode, payload []byte) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.streaming {
+		return nil, ErrStreaming
+	}
+	return c.roundTripLocked(op, payload)
+}
+
+// roundTripLocked 是 roundTrip 的实现,调用方须持有 c.mu。
+func (c *Client) roundTripLocked(op protocol.Opcode, payload []byte) ([]byte, error) {
 	if err := protocol.WriteFrame(c.bw, op, payload); err != nil {
 		return nil, err
 	}

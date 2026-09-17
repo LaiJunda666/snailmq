@@ -84,7 +84,11 @@ func ReadFrame(r io.Reader) (Opcode, []byte, error) {
 }
 
 // WriteFrame 写入完整一帧。不负责 flush;调用方(如 bufio.Writer 使用者)按需 flush。
+// payload 超过 MaxPayload 时本地拒收并返回 ErrTooLarge,避免写出非法帧。
 func WriteFrame(w io.Writer, op Opcode, payload []byte) error {
+	if len(payload) > MaxPayload {
+		return ErrTooLarge
+	}
 	_, err := w.Write(EncodeFrame(op, payload))
 	return err
 }
