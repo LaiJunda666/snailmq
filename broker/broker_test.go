@@ -133,6 +133,14 @@ func TestBrokerConcurrentPublishConsistency(t *testing.T) {
 	}
 }
 
+// TestBrokerNilStoreFactory 验证工厂返回 nil 时 CreateTopic 返回错误而非 panic。
+func TestBrokerNilStoreFactory(t *testing.T) {
+	b := New(WithStoreFactory(func() Store { return nil }))
+	if err := b.CreateTopic("t"); err == nil {
+		t.Fatal("CreateTopic with nil store factory returned nil; want error")
+	}
+}
+
 // TestBrokerEmptyTopicName 验证空主题名返回哨兵 ErrTopicNameEmpty(可 errors.Is 判定)。
 func TestBrokerEmptyTopicName(t *testing.T) {
 	b := New()

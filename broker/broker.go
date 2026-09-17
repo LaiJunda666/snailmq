@@ -80,9 +80,13 @@ func (b *Broker) CreateTopic(name string) error {
 		return ErrTopicExists
 	}
 
+	store := b.newStore()
+	if store == nil {
+		return errors.New("broker: store factory returned nil")
+	}
 	b.topics[name] = &Topic{
 		name:      name,
-		partition: newPartition(b.newStore()),
+		partition: newPartition(store),
 	}
 	return nil
 }
