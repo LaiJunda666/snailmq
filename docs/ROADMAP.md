@@ -19,7 +19,7 @@
 每订阅者维护已确认游标 + 待确认窗口;Ack/Commit;超时重投;at-least-once 语义文档化。
 
 - 接缝:新增 `Subscription.Ack(offset)`(读游标与提交游标分离);读逻辑收进 `Partition.read`,便于挂载 ack/in-flight 状态。
-- 协议:`OpError` 引入稳定错误码(如 `[u16 code][msg]`),客户端可程序化判定(V0 协议尚未对外冻结,是改动时机)。
+- 客户端:单连接多路复用(支持一连接多订阅),消除当前"一连接一订阅"限制(见 plan 记录 E3/E4)。
 
 ## V2 — consumer group 竞争消费
 

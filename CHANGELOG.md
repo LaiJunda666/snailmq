@@ -19,6 +19,8 @@
 - network:标准库 TCP server(每连接 goroutine,订阅成功后连接转为单向推送流)
 - network:标准库 TCP 客户端 `Dial`/`CreateTopic`/`Publish`/`Subscribe`/`Close` 与端到端测试
 - cmd/demo:一键演示(起 server + 双订阅者广播 10 万条,打印吞吐)
+- protocol:`OpError` 结构化错误码(`[u16 code][u32 len][msg]`)与 `Code` 常量
+- network:客户端请求相位读写超时选项(`WithClientReadTimeout`/`WithClientWriteTimeout`)与 `network.ErrClosed`
 
 ### 变更
 
@@ -26,6 +28,7 @@
 - broker:门面返回的 `ErrClosed` 附加操作与 topic 上下文(`errors.Is` 判定仍成立)
 - network:连接读 / 写超时(默认 30s):空闲连接自动关闭,写入超时的慢订阅者被丢弃
 - network:`Dial` 增加默认 5s 连接超时,并提供 `DialTimeout`
+- protocol:`OpError` payload 由纯文本改为"错误码 + 文本";新增 `MaxMessage`(单条消息体上限,与帧上限区分)
 
 ### 修复
 
@@ -40,3 +43,9 @@
 - network:客户端进入推送流后再次请求返回 `ErrStreaming`,不再静默吞掉一条推送
 - protocol:`WriteFrame` 本地拒绝超过 `MaxPayload` 的帧(`ErrTooLarge`),服务端回 `OpError` 后再断
 - broker:订阅 `Close` 后 `Read` 立即返回 `ErrClosed`,不再投递积压消息
+- network:发布/推送长度口径统一,消除"发布成功却推送超限、静默断连丢消息"
+- network:`Server.Close` 并发调用现在都等到同一完成点;连接监视 goroutine 纳入等待
+- network:客户端请求相位读写超时;`Client.Close` 后各方法返回 `ErrClosed`;响应/推送解析错误补上下文
+- broker:工厂返回 nil 时 `CreateTopic` 返回错误,不再在 `Publish` 时空指针 panic
+- network:`DialTimeout` 负值按"不设超时"处理,与文档一致
+- cmd/demo:订阅者失败时立即返回错误,不再永久阻塞
