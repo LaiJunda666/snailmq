@@ -116,3 +116,32 @@ func UnmarshalOffset(b []byte) (int64, error) {
 	}
 	return int64(binary.LittleEndian.Uint64(b[:8])), nil
 }
+
+// EncodeError 生成 OpError 的 payload:[u16 code LE][u32 msgLen][msg]。
+func EncodeError(code Code, msg string) []byte {
+	b := binary.LittleEndian.AppendUint16(nil, uint16(code))
+	b = binary.LittleEndian.AppendUint32(b, uint32(len(msg)))
+	return append(b, msg...)
+}
+
+// DecodeError 解析 OpError 的 payload,返回错误码与文本。
+// 输入截断或长度字段与实际不符时返回 ErrTruncated。
+func DecodeError(p []byte) (code Code, msg string, err error) {
+	r := bytes.NewReader(p)
+	var cb [2]byte
+	if _, err := io.ReadFull(r, cb[:]); err != nil {
+		return CodeUnknown, "", ErrTruncated
+	}
+	mlen, err := getUint32(r)
+	if err != nil {
+		return CodeUnknown, "", err
+	}
+	if int64(mlen) > int64(r.Len()) {
+		return CodeUnknown, "", ErrTruncated
+	}
+	buf := make([]byte, mlen)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return CodeUnknown, "", ErrTruncated
+	}
+	return Code(binary.LittleEndian.Uint16(cb[:])), string(buf), nil
+}

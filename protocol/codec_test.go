@@ -90,6 +90,26 @@ func TestDecodePublishTruncated(t *testing.T) {
 	}
 }
 
+// TestErrorRoundTrip 验证 OpError payload 的错误码与文本编解码对称。
+func TestErrorRoundTrip(t *testing.T) {
+	body := EncodeError(CodeTopicNotFound, "broker: topic not found")
+	code, msg, err := DecodeError(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != CodeTopicNotFound || msg != "broker: topic not found" {
+		t.Fatalf("code=%d msg=%q", code, msg)
+	}
+}
+
+// TestDecodeErrorTruncated 验证截断的错误 payload 返回 ErrTruncated。
+func TestDecodeErrorTruncated(t *testing.T) {
+	body := EncodeError(CodeClosed, "x")
+	if _, _, err := DecodeError(body[:3]); !errors.Is(err, ErrTruncated) {
+		t.Fatalf("err = %v; want ErrTruncated", err)
+	}
+}
+
 // TestOffsetRoundTrip 验证 offset 的 8 字节编解码对称。
 func TestOffsetRoundTrip(t *testing.T) {
 	b := MarshalOffset(12345)

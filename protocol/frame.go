@@ -14,7 +14,10 @@ const (
 	Magic      uint16 = 0x4D51 // "MQ"
 	Version    uint8  = 1
 	HeaderLen         = 8
-	MaxPayload        = 16 << 20 // 16 MiB 单帧上限
+	MaxPayload        = 16 << 20 // 16 MiB 单帧 payload(帧体)上限
+	// MaxMessage 是单条消息体的上限。推送帧 body = 8(offset)+4(长度)+msg,
+	// 故取 MaxPayload-12,保证任何被接受发布的消息都能装进推送帧。
+	MaxMessage = MaxPayload - 12
 )
 
 var (
@@ -32,6 +35,19 @@ const (
 	OpSubscribe   Opcode = 3
 	OpMessage     Opcode = 4
 	OpError       Opcode = 5
+)
+
+// Code 是 OpError payload 中携带的结构化错误码,
+// 让客户端可跨线用 errors.Is 判定错误类别,而不必匹配文本。
+type Code uint16
+
+const (
+	CodeUnknown Code = iota
+	CodeClosed
+	CodeTopicExists
+	CodeTopicNotFound
+	CodeEmptyTopicName
+	CodeTooLarge
 )
 
 func EncodeFrame(op Opcode, payload []byte) []byte {
