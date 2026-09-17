@@ -85,21 +85,21 @@ func TestClientTwoSubscribersBroadcast(t *testing.T) {
 	}
 }
 
-// TestClientPublishMissingTopicError 验证发布到不存在的 topic 返回错误。
+// TestClientPublishMissingTopicError 验证发布到不存在的 topic 返回结构化错误(可 errors.Is)。
 func TestClientPublishMissingTopicError(t *testing.T) {
 	addr, _, _ := startServer(t)
 	c := mustDial(t, addr)
-	if _, err := c.Publish("nope", []byte("x")); err == nil {
-		t.Fatal("want error for missing topic")
+	if _, err := c.Publish("nope", []byte("x")); !errors.Is(err, broker.ErrTopicNotFound) {
+		t.Fatalf("err = %v; want broker.ErrTopicNotFound", err)
 	}
 }
 
-// TestClientSubscribeMissingTopicError 验证订阅不存在的 topic 返回错误。
+// TestClientSubscribeMissingTopicError 验证订阅不存在的 topic 返回结构化错误(可 errors.Is)。
 func TestClientSubscribeMissingTopicError(t *testing.T) {
 	addr, _, _ := startServer(t)
 	c := mustDial(t, addr)
-	if _, err := c.Subscribe("nope"); err == nil {
-		t.Fatal("want error for missing topic")
+	if _, err := c.Subscribe("nope"); !errors.Is(err, broker.ErrTopicNotFound) {
+		t.Fatalf("err = %v; want broker.ErrTopicNotFound", err)
 	}
 }
 
@@ -193,10 +193,35 @@ func TestClientPublishTooLargeRejectedLocally(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := c.Publish("t", make([]byte, protocol.MaxPayload+1)); !errors.Is(err, protocol.ErrTooLarge) {
+	if _, err := c.Publish("t", make([]byte, protocol.MaxMessage+1)); !errors.Is(err, protocol.ErrTooLarge) {
 		t.Fatalf("oversized Publish err = %v; want protocol.ErrTooLarge", err)
 	}
 	if _, err := c.Publish("t", []byte("ok")); err != nil {
 		t.Fatalf("Publish after rejection err = %v; want nil (connection still usable)", err)
+	}
+}
+
+// TestClientClosedReturnsErrClosed 验证 Close 后各方法返回明确的 ErrClosed(而非底层 conn 错误)。
+func TestClientClosedReturnsErrClosed(t *testing.T) {
+	addr, _, _ := startServer(t)
+	c := mustDial(t, addr)
+	if err := c.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Subscribe("t"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := c.Publish("t", []byte("x")); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Publish after Close err = %v; want ErrClosed", err)
+	}
+	if err := c.CreateTopic("t2"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("CreateTopic after Close err = %v; want ErrClosed", err)
+	}
+	if _, err := c.Subscribe("t"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Subscribe after Close err = %v; want ErrClosed", err)
 	}
 }

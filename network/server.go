@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -34,6 +35,9 @@ type Server struct {
 	wg           sync.WaitGroup
 	readTimeout  time.Duration // 0 表示不设读超时
 	writeTimeout time.Duration // 0 表示不设写超时
+
+	closeOnce sync.Once
+	closeDone chan struct{} // 关闭完成信号:所有 Close 调用者都等到同一点
 }
 
 // ServerOption 配置 Server,仅应在 NewServer 时传入。
@@ -56,6 +60,7 @@ func NewServer(b *broker.Broker, opts ...ServerOption) *Server {
 		conns:        make(map[net.Conn]context.CancelFunc),
 		readTimeout:  defaultReadTimeout,
 		writeTimeout: defaultWriteTimeout,
+		closeDone:    make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -91,28 +96,29 @@ func (s *Server) Serve(ln net.Listener) error {
 }
 
 // Close 取消并关闭所有连接,唤醒阻塞中的读/写与推送流,并等待其退出。
-// 幂等:重复调用返回 nil;不关闭 listener(listener 归调用方所有)。
+// 幂等:重复调用返回 nil(若已有 Close 在进行,则等待其完成后再返回);
+// 不关闭 listener(listener 归调用方所有)。
 func (s *Server) Close() error {
-	s.mu.Lock()
-	if s.closed {
+	s.closeOnce.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		cancels := make([]context.CancelFunc, 0, len(s.conns))
+		conns := make([]net.Conn, 0, len(s.conns))
+		for conn, cancel := range s.conns {
+			conns = append(conns, conn)
+			cancels = append(cancels, cancel)
+		}
 		s.mu.Unlock()
-		return nil
-	}
-	s.closed = true
-	cancels := make([]context.CancelFunc, 0, len(s.conns))
-	conns := make([]net.Conn, 0, len(s.conns))
-	for conn, cancel := range s.conns {
-		conns = append(conns, conn)
-		cancels = append(cancels, cancel)
-	}
-	s.mu.Unlock()
 
-	// 关连接可中断阻塞在 ReadHeader / Write 上的 goroutine;cancel 唤醒阻塞在 sub.Read 上的推送流。
-	for i, conn := range conns {
-		cancels[i]()
-		_ = conn.Close()
-	}
-	s.wg.Wait()
+		// 关连接可中断阻塞在 ReadHeader / Write 上的 goroutine;cancel 唤醒阻塞在 sub.Read 上的推送流。
+		for i, conn := range conns {
+			cancels[i]()
+			_ = conn.Close()
+		}
+		s.wg.Wait()
+		close(s.closeDone)
+	})
+	<-s.closeDone
 	return nil
 }
 
@@ -151,6 +157,14 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 				}
 				continue
 			}
+			if len(msg) > protocol.MaxMessage {
+				// 超出可推送上限:直接拒绝,保证"发布成功 ⇒ 一定能推送",避免入库后推不出去。
+				terr := fmt.Errorf("network: message exceeds MaxMessage (%d): %w", protocol.MaxMessage, protocol.ErrTooLarge)
+				if err := s.respond(conn, bw, op, terr, nil); err != nil {
+					return
+				}
+				continue
+			}
 			off, perr := s.broker.Publish(topic, msg)
 			if err := s.respond(conn, bw, op, perr, protocol.MarshalOffset(off)); err != nil {
 				return
@@ -172,7 +186,9 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			defer func() { _ = sub.Close() }()
 			// 监视对端:客户端关闭连接(EOF)或发来异常数据时取消 subCtx,
 			// 从而唤醒阻塞在 sub.Read 上的推送流并清理订阅。
+			monitorDone := make(chan struct{})
 			go func() {
+				defer close(monitorDone)
 				defer subCancel()
 				var buf [256]byte
 				for {
@@ -187,6 +203,9 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			}
 			// 连接语义变为单向推送流:只读内核、写帧,直到连接关闭 / 服务端 Close / 订阅关闭。
 			s.stream(subCtx, conn, bw, sub)
+			// 关闭连接以解除监视 goroutine 的阻塞,并等其退出,确保它不会活过本连接处理函数。
+			_ = conn.Close()
+			<-monitorDone
 			return
 		default:
 			// 客户端不应主动发 OpMessage / OpError,忽略。
@@ -212,6 +231,10 @@ func (s *Server) stream(ctx context.Context, conn net.Conn, bw *bufio.Writer, su
 		for _, m := range msgs {
 			frame := protocol.EncodeMessage(m.Offset, m.Payload)
 			if err := protocol.WriteFrame(bw, protocol.OpMessage, frame); err != nil {
+				// 极端兜底:推送帧超限时先回 OpError 再断,避免订阅者只看到无解释的断连。
+				if errors.Is(err, protocol.ErrTooLarge) {
+					_ = s.respond(conn, bw, protocol.OpError, err, nil)
+				}
 				return
 			}
 		}
@@ -222,7 +245,7 @@ func (s *Server) stream(ctx context.Context, conn net.Conn, bw *bufio.Writer, su
 }
 
 // respond 写一个响应帧:成功时回与请求相同的 opcode 与 body;
-// 失败时回 OpError,payload 为错误文本。返回写错误,调用方据此结束连接。
+// 失败时回 OpError(结构化错误码 + 文本)。返回写错误,调用方据此结束连接。
 // 写前设置写 deadline,避免不读响应的客户端把 goroutine 永久钉在写阻塞上。
 func (s *Server) respond(conn net.Conn, bw *bufio.Writer, op protocol.Opcode, err error, body []byte) error {
 	if !s.armWrite(conn) {
@@ -231,7 +254,7 @@ func (s *Server) respond(conn net.Conn, bw *bufio.Writer, op protocol.Opcode, er
 	var payload []byte
 	if err != nil {
 		op = protocol.OpError
-		payload = []byte(err.Error())
+		payload = protocol.EncodeError(errorCode(err), err.Error())
 	} else {
 		payload = body
 	}
@@ -239,6 +262,24 @@ func (s *Server) respond(conn net.Conn, bw *bufio.Writer, op protocol.Opcode, er
 		return werr
 	}
 	return bw.Flush()
+}
+
+// errorCode 把 broker/protocol 的哨兵错误映射为协议错误码,供客户端结构化判定。
+func errorCode(err error) protocol.Code {
+	switch {
+	case errors.Is(err, broker.ErrClosed):
+		return protocol.CodeClosed
+	case errors.Is(err, broker.ErrTopicExists):
+		return protocol.CodeTopicExists
+	case errors.Is(err, broker.ErrTopicNotFound):
+		return protocol.CodeTopicNotFound
+	case errors.Is(err, broker.ErrTopicNameEmpty):
+		return protocol.CodeEmptyTopicName
+	case errors.Is(err, protocol.ErrTooLarge):
+		return protocol.CodeTooLarge
+	default:
+		return protocol.CodeUnknown
+	}
 }
 
 // armRead 按配置设置读 deadline;返回 false 表示连接应结束(无超时配置时恒 true)。
