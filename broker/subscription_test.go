@@ -188,6 +188,27 @@ func TestReadHugeMaxClamped(t *testing.T) {
 	}
 }
 
+// TestReadAfterCloseReturnsErrClosed 验证订阅 Close 后 Read 立即返回 ErrClosed,
+// 不再投递日志中已积压的消息(M3 回归)。
+func TestReadAfterCloseReturnsErrClosed(t *testing.T) {
+	p := newPartition(newMemoryLog())
+	for _, s := range []string{"a", "b", "c"} {
+		if _, err := p.Publish([]byte(s)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sub, err := p.Subscribe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sub.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sub.Read(context.Background(), 10); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Read after Close err = %v; want ErrClosed", err)
+	}
+}
+
 // readAll 读取 total 条消息并返回 payload;timeout 秒超时(0 表示默认 2 秒)。
 func readAll(t *testing.T, s *Subscription, total int, timeout time.Duration) []string {
 	t.Helper()

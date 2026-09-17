@@ -38,6 +38,13 @@ func (s *Subscription) Read(ctx context.Context, max int) ([]Message, error) {
 	p := s.partition
 	for {
 		p.mu.Lock()
+		// 订阅(/分区)已关闭:立即返回,不再投递积压消息,保证 Close 能可靠截断消费。
+		select {
+		case <-s.done:
+			p.mu.Unlock()
+			return nil, ErrClosed
+		default:
+		}
 		if p.closed {
 			p.mu.Unlock()
 			return nil, ErrClosed

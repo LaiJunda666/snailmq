@@ -190,8 +190,9 @@ func TestBrokerClosedErrorContext(t *testing.T) {
 }
 
 // TestBrokerConcurrentWakeAndClose 让一个阻塞中的订阅读者与多个生产者并发发布,
-// 发布结束后随即关闭订阅——在 -race 下压测唤醒 / 关闭路径:
+// 读者收满全部消息后再关闭订阅——在 -race 下压测唤醒 / 关闭路径:
 // 验证 reader 与 writer 并发无 data race、不重复、不丢已发布消息、无死锁。
+// (Close 会立即截断消费,故先收满再关。)
 func TestBrokerConcurrentWakeAndClose(t *testing.T) {
 	b := New()
 	if err := b.CreateTopic("t"); err != nil {
@@ -211,9 +212,10 @@ func TestBrokerConcurrentWakeAndClose(t *testing.T) {
 	offsets := make(chan int64, total)
 	readerDone := make(chan struct{})
 	var last int64 = -1
+	var received int64
 	go func() {
 		defer close(readerDone)
-		for {
+		for received < total {
 			msgs, err := s.Read(ctx, 16)
 			if err != nil {
 				return
@@ -225,6 +227,10 @@ func TestBrokerConcurrentWakeAndClose(t *testing.T) {
 				}
 				last = m.Offset
 				offsets <- m.Offset
+				received++
+				if received == total {
+					return
+				}
 			}
 		}
 	}()
@@ -243,8 +249,8 @@ func TestBrokerConcurrentWakeAndClose(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	_ = s.Close()
 	<-readerDone
+	_ = s.Close()
 	close(offsets)
 
 	seen := make([]bool, total)
