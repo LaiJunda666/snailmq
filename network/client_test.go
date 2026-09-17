@@ -143,6 +143,23 @@ func TestClientSubscriptionReceivesLateMessage(t *testing.T) {
 	}
 }
 
+// TestDialTimeout 验证带超时的 Dial 可正常连接,且连接失败会返回错误。
+func TestDialTimeout(t *testing.T) {
+	addr, _, _ := startServer(t)
+	c, err := DialTimeout(addr, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	if err := c.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := DialTimeout("127.0.0.1:1", 100*time.Millisecond); err == nil {
+		t.Fatal("expected error dialing closed port")
+	}
+}
+
 // TestClientRejectsRequestsAfterSubscribe 验证进入推送流后,再次订阅/发布/建 topic
 // 返回 ErrStreaming,而不是把推送帧当成响应吞掉(M2 回归)。
 func TestClientRejectsRequestsAfterSubscribe(t *testing.T) {

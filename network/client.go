@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/LaiJunda666/mq-lite/broker"
 	"github.com/LaiJunda666/mq-lite/protocol"
 )
+
+// defaultDialTimeout 是 Dial 的默认连接超时,避免对不可达地址无限等待。
+const defaultDialTimeout = 5 * time.Second
 
 // ErrStreaming 表示客户端已订阅、连接进入推送流状态,不能再发起请求。
 var ErrStreaming = errors.New("network: client is in streaming mode")
@@ -30,9 +34,15 @@ type Client struct {
 	closeErr  error
 }
 
-// Dial 连接服务端并返回客户端。
+// Dial 用默认超时(5s)连接服务端并返回客户端。
 func Dial(addr string) (*Client, error) {
-	conn, err := net.Dial("tcp", addr)
+	return DialTimeout(addr, defaultDialTimeout)
+}
+
+// DialTimeout 在指定超时内连接服务端;timeout <= 0 表示不设超时。
+func DialTimeout(addr string, timeout time.Duration) (*Client, error) {
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.Dial("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
