@@ -33,3 +33,8 @@
 - network:`Server.Close` 现在关闭连接,空闲 / 慢客户端下不再挂起
 - network:订阅连接结束(客户端断开、写失败、Close)时自动注销订阅,不再泄漏 `Partition.subs`
 - network:`Serve` 与 `Close` 的 WaitGroup 登记移入临界区,消除登记与等待的竞态
+- network:推送写超时改为在整批写入前刷新,避免空闲后收大批量消息被误断丢消息
+- network:请求-响应阶段的响应写也受写超时保护,不读响应的客户端不再钉住 goroutine
+- network:客户端进入推送流后再次请求返回 `ErrStreaming`,不再静默吞掉一条推送
+- protocol:`WriteFrame` 本地拒绝超过 `MaxPayload` 的帧(`ErrTooLarge`),服务端回 `OpError` 后再断
+- broker:订阅 `Close` 后 `Read` 立即返回 `ErrClosed`,不再投递积压消息
