@@ -25,6 +25,8 @@ var (
 	ErrStreaming = errors.New("network: client is in streaming mode")
 	// ErrClosed 表示客户端已关闭,后续操作被拒绝。
 	ErrClosed = errors.New("network: client closed")
+	// ErrOverloaded 表示服务端连接数已达上限,拒绝新连接。
+	ErrOverloaded = errors.New("network: server overloaded")
 )
 
 // ClientOption 配置 Client,仅应在 Dial/DialTimeout 时传入。
@@ -88,20 +90,26 @@ func DialTimeout(addr string, timeout time.Duration, opts ...ClientOption) (*Cli
 	return c, nil
 }
 
-// CreateTopic 创建主题;失败(重名 / 空名 / 服务端已关闭等)返回结构化错误。
+// CreateTopic 创建主题;失败(重名 / 空名 / 名称过长 / 服务端已关闭等)返回结构化错误。
 func (c *Client) CreateTopic(name string) error {
 	if c.closed.Load() {
 		return ErrClosed
+	}
+	if len(name) > broker.MaxTopicNameLen {
+		return fmt.Errorf("network: topic name too long (%d > %d)", len(name), broker.MaxTopicNameLen)
 	}
 	_, err := c.roundTrip(protocol.OpCreateTopic, []byte(name))
 	return err
 }
 
 // Publish 向主题发布一条消息并返回其 offset。
-// payload 超过 protocol.MaxMessage 时在本地拒绝并返回 protocol.ErrTooLarge。
+// payload 超过 protocol.MaxMessage 或 topic 名过长时在本地拒绝。
 func (c *Client) Publish(topic string, payload []byte) (int64, error) {
 	if c.closed.Load() {
 		return 0, ErrClosed
+	}
+	if len(topic) > broker.MaxTopicNameLen {
+		return 0, fmt.Errorf("network: topic name too long (%d > %d)", len(topic), broker.MaxTopicNameLen)
 	}
 	if len(payload) > protocol.MaxMessage {
 		return 0, fmt.Errorf("network: payload %d exceeds MaxMessage %d: %w",
@@ -217,6 +225,8 @@ func remoteError(code protocol.Code, msg string) error {
 		return fmt.Errorf("%s: %w", msg, broker.ErrTopicNameEmpty)
 	case protocol.CodeTooLarge:
 		return fmt.Errorf("%s: %w", msg, protocol.ErrTooLarge)
+	case protocol.CodeOverloaded:
+		return fmt.Errorf("%s: %w", msg, ErrOverloaded)
 	default:
 		return errors.New(msg)
 	}
