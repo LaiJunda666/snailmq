@@ -40,9 +40,11 @@ type Broker struct {
 	newStore func() Store
 }
 
+// MaxTopicNameLen 是主题名的最大字节数,防止超长名称带来的分配与存储滥用。
+const MaxTopicNameLen = 255
+
 // Topic 是一个已创建的消息主题,内部承载其唯一的 Partition。
 type Topic struct {
-	name      string
 	partition *Partition
 }
 
@@ -62,7 +64,7 @@ func New(opts ...Option) *Broker {
 }
 
 // CreateTopic 创建主题。同名返回 ErrTopicExists;空名返回 ErrTopicNameEmpty;
-// broker 已关闭返回包装后的 ErrClosed(可用 errors.Is 判断)。
+// 名称超过 MaxTopicNameLen 返回错误;broker 已关闭返回包装后的 ErrClosed(可用 errors.Is 判断)。
 // 创建后才能对该主题 Publish / Subscribe。
 func (b *Broker) CreateTopic(name string) error {
 	b.mu.Lock()
@@ -75,6 +77,9 @@ func (b *Broker) CreateTopic(name string) error {
 	if name == "" {
 		return ErrTopicNameEmpty
 	}
+	if len(name) > MaxTopicNameLen {
+		return fmt.Errorf("broker: topic name too long (%d > %d)", len(name), MaxTopicNameLen)
+	}
 
 	if _, ok := b.topics[name]; ok {
 		return ErrTopicExists
@@ -85,7 +90,6 @@ func (b *Broker) CreateTopic(name string) error {
 		return errors.New("broker: store factory returned nil")
 	}
 	b.topics[name] = &Topic{
-		name:      name,
 		partition: newPartition(store),
 	}
 	return nil

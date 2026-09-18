@@ -133,6 +133,14 @@ func TestBrokerConcurrentPublishConsistency(t *testing.T) {
 	}
 }
 
+// TestBrokerTopicNameTooLong 验证超长主题名被拒绝。
+func TestBrokerTopicNameTooLong(t *testing.T) {
+	b := New()
+	if err := b.CreateTopic(strings.Repeat("x", MaxTopicNameLen+1)); err == nil {
+		t.Fatal("CreateTopic with too-long name returned nil; want error")
+	}
+}
+
 // TestBrokerNilStoreFactory 验证工厂返回 nil 时 CreateTopic 返回错误而非 panic。
 func TestBrokerNilStoreFactory(t *testing.T) {
 	b := New(WithStoreFactory(func() Store { return nil }))
