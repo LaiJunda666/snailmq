@@ -48,6 +48,7 @@ const (
 	CodeTopicNotFound
 	CodeEmptyTopicName
 	CodeTooLarge
+	CodeOverloaded
 )
 
 func EncodeFrame(op Opcode, payload []byte) []byte {

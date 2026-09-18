@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ type Server struct {
 	wg           sync.WaitGroup
 	readTimeout  time.Duration // 0 表示不设读超时
 	writeTimeout time.Duration // 0 表示不设写超时
+	maxConns     int           // 最大并发连接数,0 表示不限
 
 	closeOnce sync.Once
 	closeDone chan struct{} // 关闭完成信号:所有 Close 调用者都等到同一点
@@ -51,6 +53,11 @@ func WithReadTimeout(d time.Duration) ServerOption {
 // WithWriteTimeout 设置单批推送的写入超时(0 表示不设)。
 func WithWriteTimeout(d time.Duration) ServerOption {
 	return func(s *Server) { s.writeTimeout = d }
+}
+
+// WithMaxConns 设置最大并发连接数(0 表示不限)。达到上限时新连接收到 OpError 后断开。
+func WithMaxConns(n int) ServerOption {
+	return func(s *Server) { s.maxConns = n }
 }
 
 // NewServer 用给定内核门面构造服务端,并启用默认读/写超时。
@@ -87,8 +94,22 @@ func (s *Server) Serve(ln net.Listener) error {
 			_ = conn.Close()
 			return errors.New("network: server closed")
 		}
+		if s.maxConns > 0 && len(s.conns) >= s.maxConns {
+			s.mu.Unlock()
+			cancel()
+			// 满员:回一个结构化错误再断开,让对端有明确反馈(而非静默拒绝)。
+			_ = protocol.WriteFrame(conn, protocol.OpError,
+				protocol.EncodeError(protocol.CodeOverloaded, "network: too many connections"))
+			_ = conn.Close()
+			continue
+		}
 		s.conns[conn] = cancel
 		s.wg.Go(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("network: recovered panic in connection handler: %v", r)
+				}
+			}()
 			s.handleConn(ctx, conn)
 		})
 		s.mu.Unlock()
@@ -184,18 +205,29 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			defer subCancel()
 			// 连接结束(客户断开/写失败/服务端 Close/分区关闭)时注销订阅,避免 Partition.subs 泄漏。
 			defer func() { _ = sub.Close() }()
-			// 监视对端:客户端关闭连接(EOF)或发来异常数据时取消 subCtx,
-			// 从而唤醒阻塞在 sub.Read 上的推送流并清理订阅。
+			// 监视对端:客户端关闭连接(EOF)、在推送相位发送数据(协议违规)或出错时
+			// 取消 subCtx,从而唤醒阻塞在 sub.Read 上的推送流并清理订阅。
 			monitorDone := make(chan struct{})
 			go func() {
 				defer close(monitorDone)
 				defer subCancel()
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("network: recovered panic in peer monitor: %v", r)
+					}
+				}()
 				var buf [256]byte
 				for {
-					if _, err := conn.Read(buf[:]); err != nil {
+					n, err := conn.Read(buf[:])
+					if err != nil || n > 0 {
 						return
 					}
 				}
+			}()
+			// 任何返回路径都关闭连接并 join monitor,确保其不活过本连接处理函数。
+			defer func() {
+				_ = conn.Close()
+				<-monitorDone
 			}()
 
 			if err := s.respond(conn, bw, op, nil, nil); err != nil {
@@ -203,9 +235,6 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			}
 			// 连接语义变为单向推送流:只读内核、写帧,直到连接关闭 / 服务端 Close / 订阅关闭。
 			s.stream(subCtx, conn, bw, sub)
-			// 关闭连接以解除监视 goroutine 的阻塞,并等其退出,确保它不会活过本连接处理函数。
-			_ = conn.Close()
-			<-monitorDone
 			return
 		default:
 			// 客户端不应主动发 OpMessage / OpError,忽略。

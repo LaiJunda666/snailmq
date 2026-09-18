@@ -231,6 +231,60 @@ func (l *singleConnListener) Close() error {
 
 func (l *singleConnListener) Addr() net.Addr { return stubAddr{} }
 
+// TestServerMaxConns 验证连接数达上限时,新连接被拒绝且不计入活跃连接。
+func TestServerMaxConns(t *testing.T) {
+	b := broker.New()
+	srv := NewServer(b, WithMaxConns(1))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = srv.Close()
+		_ = ln.Close()
+	})
+	addr := ln.Addr().String()
+	if err := b.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := Dial(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = first.Close() })
+	if err := first.CreateTopic("t2"); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := Dial(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+	// 满员连接会被服务端回 OpError 后断开(也可能先收到连接复位),两种都算拒绝。
+	if err := second.CreateTopic("t3"); err == nil {
+		t.Fatal("second connection CreateTopic succeeded; want rejection")
+	}
+	if got := srv.connCount(); got != 1 {
+		t.Fatalf("connCount = %d; want 1 (second must not be registered)", got)
+	}
+}
+
+// TestRemoteErrorMapping 验证客户端把协议错误码映射回本地哨兵错误。
+func TestRemoteErrorMapping(t *testing.T) {
+	if !errors.Is(remoteError(protocol.CodeOverloaded, "x"), ErrOverloaded) {
+		t.Fatal("CodeOverloaded should map to ErrOverloaded")
+	}
+	if !errors.Is(remoteError(protocol.CodeTooLarge, "x"), protocol.ErrTooLarge) {
+		t.Fatal("CodeTooLarge should map to protocol.ErrTooLarge")
+	}
+	if !errors.Is(remoteError(protocol.CodeClosed, "x"), broker.ErrClosed) {
+		t.Fatal("CodeClosed should map to broker.ErrClosed")
+	}
+}
+
 // TestServerRequestWriteTimeoutClosesStalledClient 验证请求-响应阶段也有写超时:
 // 客户端不读响应时,服务端写阻塞会因 writeTimeout 被清退,不会永久钉住 goroutine(M1 回归)。
 // 用 net.Pipe 制造确定性写阻塞(TCP 缓冲会自适应放大,不可靠)。
