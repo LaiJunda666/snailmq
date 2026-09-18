@@ -20,12 +20,15 @@
 
 - 接缝:新增 `Subscription.Ack(offset)`(读游标与提交游标分离);读逻辑收进 `Partition.read`,便于挂载 ack/in-flight 状态。
 - 客户端:单连接多路复用(支持一连接多订阅),消除当前"一连接一订阅"限制(见 plan 记录 E3/E4)。
+- 生产韧性:心跳/半开连接检测、慢消费者策略、优雅排空关闭、协议版本协商。
+- 可观测性:可选注入 Logger/Metrics + `Server.Stats()`(含订阅滞后等关键指标),保持零三方依赖。
 
 ## V2 — consumer group 竞争消费
 
 无组广播 与 组竞争并存;分区在组成员间分配;心跳超时触发分区接管。
 
 - 接缝:预留 key 分区能力(`CreateTopic(name, WithPartitions(n))`、`Publish(topic, key, payload)`);组位点用独立 `OffsetStore`/`MetaStore`,不复用消息 `Store`。
+- 安全:多租户 / 公网场景前补 TLS 与认证授权。
 
 ## V3 — WAL 持久化
 
@@ -33,6 +36,7 @@ store 磁盘后端:append-only 顺序写、分段文件 + 索引、尾部截断�
 
 - `Store` 接口扩为含 `Close`/`FirstOffset`,工厂改为 `func() (Store, error)`(open 失败可在创建期返回)。
 - 去掉 `offset == index` 假设(截断/retention 前必须完成);`CreateTopic` 的 store 构造移出 broker 全局锁。
+- 资源上限与 retention:每 topic 字节 / 条数上限(`WithMaxTopicBytes`/`WithMaxTopicMessages` + `ErrBackpressure`),内存不再依赖 OOM 兜底。
 
 ## V4 — raft 集群
 

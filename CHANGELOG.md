@@ -21,6 +21,7 @@
 - cmd/demo:一键演示(起 server + 双订阅者广播 10 万条,打印吞吐)
 - protocol:`OpError` 结构化错误码(`[u16 code][u32 len][msg]`)与 `Code` 常量
 - network:客户端请求相位读写超时选项(`WithClientReadTimeout`/`WithClientWriteTimeout`)与 `network.ErrClosed`
+- network:`Server` `WithMaxConns` 连接数上限(超限回 `CodeOverloaded`);`broker.MaxTopicNameLen` 主题名上限
 
 ### 变更
 
@@ -49,3 +50,5 @@
 - broker:工厂返回 nil 时 `CreateTopic` 返回错误,不再在 `Publish` 时空指针 panic
 - network:`DialTimeout` 负值按"不设超时"处理,与文档一致
 - cmd/demo:订阅者失败时立即返回错误,不再永久阻塞
+- network:连接处理与对端监视 goroutine 增加 panic 隔离;监视 goroutine 在所有返回路径 join
+- network:推送相位收到客户端数据视为协议违规并断开;超长 topic 名在 broker/client 侧拒绝

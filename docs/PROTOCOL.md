@@ -34,12 +34,14 @@ byte 8+    payload
 | 3 | topic 不存在 |
 | 4 | topic 名为空 |
 | 5 | 帧/消息超限 |
+| 6 | 服务端过载(连接数超限) |
 
 ## 消息长度上限
 
 - 单帧 payload 上限 `MaxPayload = 16 MiB`
 - 单条消息体上限 `MaxMessage = MaxPayload - 12`(推送帧 body = 8 字节 offset + 4 字节长度 + 消息体),
   保证任何被接受发布的消息都能装入推送帧
+- topic 名上限 `MaxTopicNameLen = 255` 字节(broker 层限制)
 
 ## 定长字符串字段
 
