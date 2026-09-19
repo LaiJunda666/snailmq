@@ -95,6 +95,8 @@ func DialTimeout(addr string, timeout time.Duration, opts ...ClientOption) (*Cli
 		bw:           bufio.NewWriter(conn),
 		readTimeout:  defaultClientTimeout,
 		writeTimeout: defaultClientTimeout,
+		readBuffer:   defaultSocketBuffer,
+		writeBuffer:  defaultSocketBuffer,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -156,6 +158,143 @@ func (c *Client) Publish(topic string, payload []byte) (int64, error) {
 		return 0, fmt.Errorf("network: publish response: %w", err)
 	}
 	return off, nil
+}
+
+// PublishBatch 一次发布同一 topic 的多条消息,服务端以单帧 ack 返回首条 offset;
+// 本批 offset 连续,即 [base, base+len(payloads))。比逐条 Publish 少 N-1 次往返。
+func (c *Client) PublishBatch(topic string, payloads [][]byte) (base int64, err error) {
+	if c.closed.Load() {
+		return 0, ErrClosed
+	}
+	if len(topic) > broker.MaxTopicNameLen {
+		return 0, fmt.Errorf("network: topic name too long (%d > %d)", len(topic), broker.MaxTopicNameLen)
+	}
+	for i, p := range payloads {
+		if len(p) > protocol.MaxMessage {
+			return 0, fmt.Errorf("network: payload[%d] %d exceeds MaxMessage %d: %w",
+				i, len(p), protocol.MaxMessage, protocol.ErrTooLarge)
+		}
+	}
+	body, err := c.roundTripWrite(protocol.OpPublishBatch, func(w *bufio.Writer) error {
+		return protocol.WritePublishBatch(w, topic, payloads)
+	})
+	if err != nil {
+		return 0, err
+	}
+	base, count, err := protocol.DecodePublishAck(body)
+	if err != nil {
+		return 0, fmt.Errorf("network: publish-batch ack: %w", err)
+	}
+	if count != len(payloads) {
+		return 0, fmt.Errorf("network: publish-batch ack count %d != %d", count, len(payloads))
+	}
+	return base, nil
+}
+
+// PublishAsync 以 fire-and-forget 方式发布一条消息:不等待 ack,失败也无法同步感知。
+// 适用于可容忍丢失的吞吐场景;streaming 或已关闭时返回错误。
+func (c *Client) PublishAsync(topic string, payload []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed.Load() {
+		return ErrClosed
+	}
+	if c.streaming {
+		return ErrStreaming
+	}
+	if c.writeTimeout > 0 {
+		_ = c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
+	}
+	if err := protocol.WritePublishNoAck(c.bw, topic, payload); err != nil {
+		return c.opErr(err)
+	}
+	return c.opErr(c.bw.Flush())
+}
+
+// Batcher 按 maxBatch / maxDelay 攒批后调用 PublishBatch,摊薄小消息的往返开销。
+// Add 保存 payload 引用,调用方在批次 flush 前不得修改其内容。
+type Batcher struct {
+	c        *Client
+	topic    string
+	maxBatch int
+	maxDelay time.Duration
+
+	mu     sync.Mutex
+	buf    [][]byte
+	timer  *time.Timer
+	err    error
+	closed bool
+}
+
+// NewBatcher 创建攒批发布器;maxBatch<=0 视为 1,maxDelay<=0 表示不启用定时 flush。
+func NewBatcher(c *Client, topic string, maxBatch int, maxDelay time.Duration) *Batcher {
+	if maxBatch <= 0 {
+		maxBatch = 1
+	}
+	return &Batcher{c: c, topic: topic, maxBatch: maxBatch, maxDelay: maxDelay}
+}
+
+// Add 追加一条消息;达到 maxBatch 时立即 flush 并返回其结果。
+func (b *Batcher) Add(payload []byte) error {
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return ErrClosed
+	}
+	if b.err != nil {
+		err := b.err
+		b.mu.Unlock()
+		return err
+	}
+	b.buf = append(b.buf, payload)
+	if len(b.buf) >= b.maxBatch {
+		b.mu.Unlock()
+		_, _, err := b.Flush()
+		return err
+	}
+	if b.timer == nil && b.maxDelay > 0 {
+		b.timer = time.AfterFunc(b.maxDelay, func() { _, _, _ = b.Flush() })
+	}
+	b.mu.Unlock()
+	return nil
+}
+
+// Flush 立即发送当前缓冲批次,返回首条 offset 与条数;空缓冲返回 (0,0,上一次错误)。
+func (b *Batcher) Flush() (int64, int, error) {
+	b.mu.Lock()
+	if b.timer != nil {
+		b.timer.Stop()
+		b.timer = nil
+	}
+	if len(b.buf) == 0 {
+		err := b.err
+		b.mu.Unlock()
+		return 0, 0, err
+	}
+	batch := b.buf
+	b.buf = nil
+	b.mu.Unlock()
+
+	base, err := b.c.PublishBatch(b.topic, batch)
+	b.mu.Lock()
+	if err != nil {
+		b.err = err
+	}
+	b.mu.Unlock()
+	if err != nil {
+		return 0, len(batch), err
+	}
+	return base, len(batch), nil
+}
+
+// Close 停止定时器并 flush 剩余消息;之后 Add 返回 ErrClosed。
+func (b *Batcher) Close() error {
+	b.mu.Lock()
+	b.closed = true
+	b.mu.Unlock()
+	_, _, err := b.Flush()
+	return err
 }
 
 // Subscribe 订阅主题;成功后本连接的语义变为单向推送流。
@@ -308,4 +447,26 @@ func (s *Subscription) Read() (broker.Message, error) {
 	default:
 		return broker.Message{}, fmt.Errorf("network: unexpected opcode %d", op)
 	}
+}
+
+// ReadBatch 读取一到多条推送消息:阻塞等待第一条,随后把已到达(缓冲内)的消息一并返回,
+// 至多 max 条。用于减少逐条 Read 的调用开销;空闲时行为与 Read 相同。
+func (s *Subscription) ReadBatch(max int) ([]broker.Message, error) {
+	if max <= 0 {
+		max = 1
+	}
+	first, err := s.Read()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]broker.Message, 0, max)
+	out = append(out, first)
+	for len(out) < max && s.c.br.Buffered() > 0 {
+		m, err := s.Read()
+		if err != nil {
+			break
+		}
+		out = append(out, m)
+	}
+	return out, nil
 }

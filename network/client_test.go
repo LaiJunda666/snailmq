@@ -2,6 +2,7 @@ package network
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -184,6 +185,132 @@ func TestSocketBufferOptionsEndToEnd(t *testing.T) {
 	m, err := sub.Read()
 	if err != nil || string(m.Payload) != "hello" {
 		t.Fatalf("Read = %+v, %v; want hello", m, err)
+	}
+}
+
+// TestClientPublishBatch 验证批量发布返回首条 offset 且订阅者按序收到全部消息。
+func TestClientPublishBatch(t *testing.T) {
+	addr, _, _ := startServer(t)
+	setup := mustDial(t, addr)
+	if err := setup.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := mustDial(t, addr).Subscribe("t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := mustDial(t, addr)
+
+	base, err := pub.PublishBatch("t", [][]byte{[]byte("a"), []byte("b"), []byte("c")})
+	if err != nil || base != 0 {
+		t.Fatalf("PublishBatch = %d, %v; want 0, nil", base, err)
+	}
+	for i, want := range []string{"a", "b", "c"} {
+		m, err := sub.Read()
+		if err != nil || string(m.Payload) != want || m.Offset != int64(i) {
+			t.Fatalf("msg[%d] = %+v, %v; want %q offset %d", i, m, err, want, i)
+		}
+	}
+}
+
+// TestClientPublishAsync 验证 fire-and-forget 发布:不等 ack,但消息仍最终到达订阅者。
+func TestClientPublishAsync(t *testing.T) {
+	addr, _, _ := startServer(t)
+	setup := mustDial(t, addr)
+	if err := setup.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := mustDial(t, addr).Subscribe("t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := mustDial(t, addr)
+	for i := range 3 {
+		if err := pub.PublishAsync("t", fmt.Appendf(nil, "m%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 3 {
+		m, err := sub.Read()
+		if err != nil || string(m.Payload) != fmt.Sprintf("m%d", i) {
+			t.Fatalf("msg[%d] = %+v, %v", i, m, err)
+		}
+	}
+}
+
+// TestBatcher 验证攒批发布:达到 maxBatch 或 Close 时 flush,offset 连续。
+func TestBatcher(t *testing.T) {
+	addr, _, _ := startServer(t)
+	setup := mustDial(t, addr)
+	if err := setup.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := mustDial(t, addr).Subscribe("t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := mustDial(t, addr)
+
+	b := NewBatcher(pub, "t", 2, 50*time.Millisecond)
+	if err := b.Add([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Add([]byte("b")); err != nil { // 达到 maxBatch,立即 flush
+		t.Fatal(err)
+	}
+	if err := b.Add([]byte("c")); err != nil {
+		t.Fatal(err)
+	}
+	base, count, err := b.Flush()
+	if err != nil || base != 2 || count != 1 {
+		t.Fatalf("Flush = %d, %d, %v; want 2, 1, nil", base, count, err)
+	}
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, want := range []string{"a", "b", "c"} {
+		m, err := sub.Read()
+		if err != nil || string(m.Payload) != want || m.Offset != int64(i) {
+			t.Fatalf("msg[%d] = %+v, %v; want %q", i, m, err, want)
+		}
+	}
+}
+
+// TestSubscriptionReadBatch 验证批量读:循环 ReadBatch 能收满全部消息且保序。
+func TestSubscriptionReadBatch(t *testing.T) {
+	addr, _, _ := startServer(t)
+	setup := mustDial(t, addr)
+	if err := setup.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+	sub, err := mustDial(t, addr).Subscribe("t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := mustDial(t, addr)
+
+	const total = 10
+	payloads := make([][]byte, total)
+	for i := range payloads {
+		payloads[i] = fmt.Appendf(nil, "m%d", i)
+	}
+	if _, err := pub.PublishBatch("t", payloads); err != nil {
+		t.Fatal(err)
+	}
+
+	got := 0
+	for got < total {
+		msgs, err := sub.ReadBatch(4)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range msgs {
+			if string(m.Payload) != fmt.Sprintf("m%d", got) {
+				t.Fatalf("msg[%d] = %q; want m%d", got, m.Payload, got)
+			}
+			got++
+		}
 	}
 }
 
