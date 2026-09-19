@@ -25,6 +25,7 @@
 
 ### 变更
 
+- 项目更名 SnailMQ,Go module 路径迁移为 `github.com/LaiJunda666/snailmq`
 - broker:`Close` 统一为幂等语义,重复调用返回 nil
 - broker:门面返回的 `ErrClosed` 附加操作与 topic 上下文(`errors.Is` 判定仍成立)
 - network:连接读 / 写超时(默认 30s):空闲连接自动关闭,写入超时的慢订阅者被丢弃

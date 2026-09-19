@@ -1,4 +1,4 @@
-// Package broker 是 mq-lite 的内存版广播内核,不依赖网络层,可独立测试、可内嵌使用。
+// Package broker 是 SnailMQ 的内存版广播内核,不依赖网络层,可独立测试、可内嵌使用。
 //
 // 模型:每个 topic 一个分区(Partition),分区持有有序不可变日志(Store),
 // 广播订阅者(Subscription)各持独立 offset 尾随读取。写入由分区持锁串行化,

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/LaiJunda666/mq-lite/broker"
-	"github.com/LaiJunda666/mq-lite/protocol"
+	"github.com/LaiJunda666/snailmq/broker"
+	"github.com/LaiJunda666/snailmq/protocol"
 )
 
 // connCount 返回当前活跃连接数(测试用于等待连接处理 goroutine 退出)。

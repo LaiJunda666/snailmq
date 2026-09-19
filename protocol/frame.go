@@ -1,4 +1,4 @@
-// Package protocol 定义 mq-lite 的二进制帧与各 opcode 的 payload 编解码。
+// Package protocol 定义 SnailMQ 的二进制帧与各 opcode 的 payload 编解码。
 //
 // 纯编解码层:只吃 io.Reader / []byte,不依赖 broker 或网络,可独立测试。
 // 帧格式:8 字节定长头(magic/version/opcode/payloadLen)+ payload。

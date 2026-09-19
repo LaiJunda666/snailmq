@@ -1,4 +1,4 @@
-// Command demo 一键演示 mq-lite 的 V0 闭环:
+// Command demo 一键演示 SnailMQ 的 V0 闭环:
 // 起 server → 建 topic → 两个订阅者各自读满全量 → 发布者顺序发 N 条 → 打印吞吐。
 package main
 
@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LaiJunda666/mq-lite/broker"
-	"github.com/LaiJunda666/mq-lite/network"
+	"github.com/LaiJunda666/snailmq/broker"
+	"github.com/LaiJunda666/snailmq/network"
 )
 
 const (
@@ -45,7 +45,7 @@ func run() error {
 	defer func() { _ = srv.Close() }()
 
 	addr := ln.Addr().String()
-	fmt.Printf("mq-lite demo server on %s\n", addr)
+	fmt.Printf("SnailMQ demo server on %s\n", addr)
 
 	// 发布者用独立连接:订阅成功后连接会转为推送流,不能再发布。
 	pub, err := network.Dial(addr)

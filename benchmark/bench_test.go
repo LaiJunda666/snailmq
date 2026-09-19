@@ -1,4 +1,4 @@
-// Package benchmark 提供 mq-lite 的内核与端到端基准。
+// Package benchmark 提供 SnailMQ 的内核与端到端基准。
 //
 // 说明:内存日志无界,直接压 64KiB 大消息会 OOM,故内核/协议路径基准
 // 通过 broker.WithStoreFactory 注入不保留消息的测试 Store(只测锁/通知/协议开销);
@@ -10,8 +10,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/LaiJunda666/mq-lite/broker"
-	"github.com/LaiJunda666/mq-lite/network"
+	"github.com/LaiJunda666/snailmq/broker"
+	"github.com/LaiJunda666/snailmq/network"
 )
 
 // sinkStore 只分配 offset,不保存消息,用于无界增长场景的发布路径基准。

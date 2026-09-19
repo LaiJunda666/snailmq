@@ -1,9 +1,9 @@
-# mq-lite Makefile — 统一入口
+# SnailMQ Makefile — 统一入口
 
 .PHONY: build test vet fmt fmt-fix bench demo help clean
 
 help:
-	@echo "mq-lite Makefile"
+	@echo "SnailMQ Makefile"
 	@echo "  make build     go build ./..."
 	@echo "  make test      go test -race ./..."
 	@echo "  make vet       go vet ./..."

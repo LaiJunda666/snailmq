@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/LaiJunda666/mq-lite/broker"
-	"github.com/LaiJunda666/mq-lite/protocol"
+	"github.com/LaiJunda666/snailmq/broker"
+	"github.com/LaiJunda666/snailmq/protocol"
 )
 
 const (

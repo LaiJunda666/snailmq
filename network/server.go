@@ -1,4 +1,4 @@
-// Package network 提供 mq-lite 的标准库 TCP 服务端与客户端(客户端见 client.go)。
+// Package network 提供 SnailMQ 的标准库 TCP 服务端与客户端(客户端见 client.go)。
 //
 // 帧编解码复用 protocol 包,业务调用 broker 门面;依赖方向为 network → broker + protocol,
 // broker 不反向依赖 network。服务端每连接一个 goroutine,订阅成功后该连接转为单向推送流。
@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/LaiJunda666/mq-lite/broker"
-	"github.com/LaiJunda666/mq-lite/protocol"
+	"github.com/LaiJunda666/snailmq/broker"
+	"github.com/LaiJunda666/snailmq/protocol"
 )
 
 const (
@@ -27,7 +27,7 @@ const (
 	defaultSocketBuffer = 256 << 10
 )
 
-// Server 是 mq-lite 的 TCP 服务端:每条连接一个 goroutine,
+// Server 是 SnailMQ 的 TCP 服务端:每条连接一个 goroutine,
 // 订阅成功前走"请求-响应",订阅成功后该连接转为单向推送流(只发 OpMessage)。
 type Server struct {
 	broker *broker.Broker
