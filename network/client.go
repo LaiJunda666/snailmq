@@ -43,6 +43,16 @@ func WithClientWriteTimeout(d time.Duration) ClientOption {
 	return func(c *Client) { c.writeTimeout = d }
 }
 
+// WithClientReadBuffer 设置连接的内核读缓冲字节数(0 表示用系统默认)。
+func WithClientReadBuffer(n int) ClientOption {
+	return func(c *Client) { c.readBuffer = n }
+}
+
+// WithClientWriteBuffer 设置连接的内核写缓冲字节数(0 表示用系统默认)。
+func WithClientWriteBuffer(n int) ClientOption {
+	return func(c *Client) { c.writeBuffer = n }
+}
+
 // Client 是官方 Go 客户端(单连接、单订阅)。
 //
 // 订阅前走"请求-响应";调用 Subscribe 成功后,该连接转为该订阅的推送流,
@@ -56,6 +66,8 @@ type Client struct {
 	streaming    bool          // 是否已进入推送流(受 mu 保护)
 	readTimeout  time.Duration // 请求相位读超时,0 不设
 	writeTimeout time.Duration // 请求相位写超时,0 不设
+	readBuffer   int           // 内核读缓冲,0 用默认
+	writeBuffer  int           // 内核写缓冲,0 用默认
 
 	closed    atomic.Bool
 	closeOnce sync.Once
@@ -87,7 +99,25 @@ func DialTimeout(addr string, timeout time.Duration, opts ...ClientOption) (*Cli
 	for _, opt := range opts {
 		opt(c)
 	}
+	c.tuneConn()
 	return c, nil
+}
+
+// tuneConn 按配置调整连接的内核读写缓冲(仅 TCP 生效)。
+func (c *Client) tuneConn() {
+	if c.readBuffer <= 0 && c.writeBuffer <= 0 {
+		return
+	}
+	tcp, ok := c.conn.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	if c.readBuffer > 0 {
+		_ = tcp.SetReadBuffer(c.readBuffer)
+	}
+	if c.writeBuffer > 0 {
+		_ = tcp.SetWriteBuffer(c.writeBuffer)
+	}
 }
 
 // CreateTopic 创建主题;失败(重名 / 空名 / 名称过长 / 服务端已关闭等)返回结构化错误。
@@ -115,7 +145,9 @@ func (c *Client) Publish(topic string, payload []byte) (int64, error) {
 		return 0, fmt.Errorf("network: payload %d exceeds MaxMessage %d: %w",
 			len(payload), protocol.MaxMessage, protocol.ErrTooLarge)
 	}
-	body, err := c.roundTrip(protocol.OpPublish, protocol.EncodePublish(topic, payload))
+	body, err := c.roundTripWrite(protocol.OpPublish, func(w *bufio.Writer) error {
+		return protocol.WritePublish(w, topic, payload)
+	})
 	if err != nil {
 		return 0, err
 	}
@@ -138,7 +170,9 @@ func (c *Client) Subscribe(topic string) (*Subscription, error) {
 	if c.streaming {
 		return nil, ErrStreaming
 	}
-	if _, err := c.roundTripLocked(protocol.OpSubscribe, []byte(topic)); err != nil {
+	if _, err := c.roundTripWriteLocked(protocol.OpSubscribe, func(w *bufio.Writer) error {
+		return protocol.WriteFrame(w, protocol.OpSubscribe, []byte(topic))
+	}); err != nil {
 		return nil, err
 	}
 	c.streaming = true
@@ -158,6 +192,13 @@ func (c *Client) Close() error {
 
 // roundTrip 串行地发送请求帧并读取同序响应帧;关闭或已进入推送流时拒绝。
 func (c *Client) roundTrip(op protocol.Opcode, payload []byte) ([]byte, error) {
+	return c.roundTripWrite(op, func(w *bufio.Writer) error {
+		return protocol.WriteFrame(w, op, payload)
+	})
+}
+
+// roundTripWrite 与 roundTrip 相同,但由调用方决定如何写请求体(便于 Publish 直写、免拼接拷贝)。
+func (c *Client) roundTripWrite(op protocol.Opcode, write func(*bufio.Writer) error) ([]byte, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -167,16 +208,16 @@ func (c *Client) roundTrip(op protocol.Opcode, payload []byte) ([]byte, error) {
 	if c.streaming {
 		return nil, ErrStreaming
 	}
-	return c.roundTripLocked(op, payload)
+	return c.roundTripWriteLocked(op, write)
 }
 
-// roundTripLocked 是 roundTrip 的实现,调用方须持有 c.mu。
+// roundTripWriteLocked 是请求-响应的实现,调用方须持有 c.mu。
 // 请求相位受读/写超时保护,避免服务端不响应时永久阻塞。
-func (c *Client) roundTripLocked(op protocol.Opcode, payload []byte) ([]byte, error) {
+func (c *Client) roundTripWriteLocked(op protocol.Opcode, write func(*bufio.Writer) error) ([]byte, error) {
 	if c.writeTimeout > 0 {
 		_ = c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
 	}
-	if err := protocol.WriteFrame(c.bw, op, payload); err != nil {
+	if err := write(c.bw); err != nil {
 		return nil, c.opErr(err)
 	}
 	if err := c.bw.Flush(); err != nil {

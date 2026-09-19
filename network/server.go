@@ -37,6 +37,8 @@ type Server struct {
 	readTimeout  time.Duration // 0 表示不设读超时
 	writeTimeout time.Duration // 0 表示不设写超时
 	maxConns     int           // 最大并发连接数,0 表示不限
+	readBuffer   int           // 连接读缓冲字节数,0 表示用系统默认
+	writeBuffer  int           // 连接写缓冲字节数,0 表示用系统默认
 
 	closeOnce sync.Once
 	closeDone chan struct{} // 关闭完成信号:所有 Close 调用者都等到同一点
@@ -58,6 +60,17 @@ func WithWriteTimeout(d time.Duration) ServerOption {
 // WithMaxConns 设置最大并发连接数(0 表示不限)。达到上限时新连接收到 OpError 后断开。
 func WithMaxConns(n int) ServerOption {
 	return func(s *Server) { s.maxConns = n }
+}
+
+// WithReadBuffer 设置每个连接的内核读缓冲字节数(0 表示用系统默认);
+// 大消息高吞吐场景可放大以减少系统调用与窗口抖动。
+func WithReadBuffer(n int) ServerOption {
+	return func(s *Server) { s.readBuffer = n }
+}
+
+// WithWriteBuffer 设置每个连接的内核写缓冲字节数(0 表示用系统默认)。
+func WithWriteBuffer(n int) ServerOption {
+	return func(s *Server) { s.writeBuffer = n }
 }
 
 // NewServer 用给定内核门面构造服务端,并启用默认读/写超时。
@@ -83,6 +96,7 @@ func (s *Server) Serve(ln net.Listener) error {
 		if err != nil {
 			return err
 		}
+		s.tuneConn(conn)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		// 登记与启动必须在同一临界区内完成:否则 Close 可能在登记后、wg.Go 前
@@ -258,8 +272,7 @@ func (s *Server) stream(ctx context.Context, conn net.Conn, bw *bufio.Writer, su
 			return
 		}
 		for _, m := range msgs {
-			frame := protocol.EncodeMessage(m.Offset, m.Payload)
-			if err := protocol.WriteFrame(bw, protocol.OpMessage, frame); err != nil {
+			if err := protocol.WriteMessage(bw, m.Offset, m.Payload); err != nil {
 				// 极端兜底:推送帧超限时先回 OpError 再断,避免订阅者只看到无解释的断连。
 				if errors.Is(err, protocol.ErrTooLarge) {
 					_ = s.respond(conn, bw, protocol.OpError, err, nil)
@@ -308,6 +321,23 @@ func errorCode(err error) protocol.Code {
 		return protocol.CodeTooLarge
 	default:
 		return protocol.CodeUnknown
+	}
+}
+
+// tuneConn 按配置调整连接的内核读写缓冲(仅 TCP 生效;0 表示不改)。
+func (s *Server) tuneConn(conn net.Conn) {
+	if s.readBuffer <= 0 && s.writeBuffer <= 0 {
+		return
+	}
+	tcp, ok := conn.(*net.TCPConn)
+	if !ok {
+		return
+	}
+	if s.readBuffer > 0 {
+		_ = tcp.SetReadBuffer(s.readBuffer)
+	}
+	if s.writeBuffer > 0 {
+		_ = tcp.SetWriteBuffer(s.writeBuffer)
 	}
 }
 

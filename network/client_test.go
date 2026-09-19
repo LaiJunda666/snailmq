@@ -2,6 +2,7 @@ package network
 
 import (
 	"errors"
+	"net"
 	"testing"
 	"time"
 
@@ -140,6 +141,49 @@ func TestClientSubscriptionReceivesLateMessage(t *testing.T) {
 		t.Fatalf("Read err: %v", err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for late message")
+	}
+}
+
+// TestSocketBufferOptionsEndToEnd 验证服务端与客户端的内核缓冲选项下闭环仍正常。
+func TestSocketBufferOptionsEndToEnd(t *testing.T) {
+	b := broker.New()
+	srv := NewServer(b, WithReadBuffer(64<<10), WithWriteBuffer(64<<10))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = srv.Close()
+		_ = ln.Close()
+	})
+	addr := ln.Addr().String()
+	if err := b.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+
+	subClient, err := Dial(addr, WithClientReadBuffer(64<<10), WithClientWriteBuffer(64<<10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = subClient.Close() })
+	sub, err := subClient.Subscribe("t")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pub, err := Dial(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pub.Close() })
+	if _, err := pub.Publish("t", []byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := sub.Read()
+	if err != nil || string(m.Payload) != "hello" {
+		t.Fatalf("Read = %+v, %v; want hello", m, err)
 	}
 }
 
