@@ -36,6 +36,7 @@
 - protocol:批量发布 `OpPublishBatch`(单帧批量 ack)与无 ack 发布 `OpPublishNoAck`
 - network:`Client.PublishBatch` / `PublishAsync` / `Batcher`(linger 攒批)/ `Subscription.ReadBatch`
 - protocol:`WriteMessageBatch` 用 writev 一次写多条推送,头缓冲池化(sync.Pool)
+- benchmark:内核 / 端到端基准(参数化 10B/1KiB/64KiB,含 MB/s)与 `benchmark/RESULT.md`
 
 ### 修复
 

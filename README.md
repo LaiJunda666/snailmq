@@ -26,6 +26,13 @@ V0 最小闭环进行中;工程骨架(Makefile / CI / AGENTS / 架构·协议·�
 
 单机核心(广播) → ack / 消费组 → WAL 持久化 → raft 集群。
 
+## Benchmark
+
+内核(内存)与端到端(TCP loopback)基准,参数化 10B / 1KiB / 64KiB,含 MB/s 与分配数据,
+见 [`benchmark/RESULT.md`](benchmark/RESULT.md)。
+
+运行:`make bench`
+
 ## License
 
 [MIT](LICENSE)
