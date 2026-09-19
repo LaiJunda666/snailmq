@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-19
+
 ### 添加
 
 - 项目骨架:Go 模块、MIT License、README、CHANGELOG
@@ -63,3 +65,6 @@
 - cmd/demo:订阅者失败时立即返回错误,不再永久阻塞
 - network:连接处理与对端监视 goroutine 增加 panic 隔离;监视 goroutine 在所有返回路径 join
 - network:推送相位收到客户端数据视为协议违规并断开;超长 topic 名在 broker/client 侧拒绝
+
+[Unreleased]: https://github.com/LaiJunda666/snailmq/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/LaiJunda666/snailmq/releases/tag/v0.1.0
