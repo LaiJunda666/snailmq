@@ -30,6 +30,9 @@
 - network:连接读 / 写超时(默认 30s):空闲连接自动关闭,写入超时的慢订阅者被丢弃
 - network:`Dial` 增加默认 5s 连接超时,并提供 `DialTimeout`
 - protocol:`OpError` payload 由纯文本改为"错误码 + 文本";新增 `MaxMessage`(单条消息体上限,与帧上限区分)
+- cmd/demo:吞吐同时打印 msg/s 与 MB/s(以消息 payload 字节计),避免小消息下 msg/s 误导
+- protocol:解码零拷贝(`payload` 为输入子切片);新增直写 `WriteMessage`/`WritePublish`(免整帧拼接拷贝)
+- network:服务端 / 客户端内核读写缓冲可配(`WithReadBuffer`/`WithWriteBuffer`、`WithClientReadBuffer`/`WithClientWriteBuffer`)
 
 ### 修复
 
