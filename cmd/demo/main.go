@@ -29,6 +29,7 @@ func main() {
 type readerResult struct {
 	id      int
 	last    int64
+	bytes   int
 	elapsed time.Duration
 }
 
@@ -83,20 +84,23 @@ func run() error {
 	}
 
 	start := time.Now()
+	sentBytes := 0
 	for j := range total {
-		if _, err := pub.Publish(topicName, fmt.Appendf(nil, "msg-%d", j)); err != nil {
+		payload := fmt.Appendf(nil, "msg-%d", j)
+		if _, err := pub.Publish(topicName, payload); err != nil {
 			return err
 		}
+		sentBytes += len(payload)
 	}
 	elapsed := time.Since(start)
-	fmt.Printf("publisher: %d messages in %v (%.0f msg/s end-to-end)\n",
-		total, elapsed.Round(time.Millisecond), rate(total, elapsed))
+	fmt.Printf("publisher: %d messages / %d B in %v (%.0f msg/s, %.1f MB/s end-to-end)\n",
+		total, sentBytes, elapsed.Round(time.Millisecond), rate(total, elapsed), mbps(sentBytes, elapsed))
 
 	wg.Wait()
 	close(results)
 	for r := range results {
-		fmt.Printf("subscriber %d: read %d messages (last offset %d) in %v (%.0f msg/s)\n",
-			r.id, total, r.last, r.elapsed.Round(time.Millisecond), rate(total, r.elapsed))
+		fmt.Printf("subscriber %d: read %d messages / %d B (last offset %d) in %v (%.0f msg/s, %.1f MB/s)\n",
+			r.id, total, r.bytes, r.last, r.elapsed.Round(time.Millisecond), rate(total, r.elapsed), mbps(r.bytes, r.elapsed))
 	}
 
 	select {
@@ -123,17 +127,24 @@ func consume(addr string, id int, ready chan<- struct{}) (readerResult, error) {
 
 	start := time.Now()
 	var last int64
+	recvBytes := 0
 	for range total {
 		m, err := sub.Read()
 		if err != nil {
 			return readerResult{}, err
 		}
 		last = m.Offset
+		recvBytes += len(m.Payload)
 	}
-	return readerResult{id: id, last: last, elapsed: time.Since(start)}, nil
+	return readerResult{id: id, last: last, bytes: recvBytes, elapsed: time.Since(start)}, nil
 }
 
 // rate 返回每秒消息数。
 func rate(n int, d time.Duration) float64 {
 	return float64(n) / d.Seconds()
+}
+
+// mbps 返回每秒兆字节数(以消息 payload 字节计)。
+func mbps(bytes int, d time.Duration) float64 {
+	return float64(bytes) / d.Seconds() / (1 << 20)
 }
