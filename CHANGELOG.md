@@ -31,6 +31,7 @@
 - network:连接读 / 写超时(默认 30s):空闲连接自动关闭,写入超时的慢订阅者被丢弃
 - network:`Dial` 增加默认 5s 连接超时,并提供 `DialTimeout`
 - protocol:`OpError` payload 由纯文本改为"错误码 + 文本";新增 `MaxMessage`(单条消息体上限,与帧上限区分)
+- CI 增加 lint 与 fuzz 冒烟;移除未使用的 `examples/` 占位目录
 - cmd/demo:吞吐同时打印 msg/s 与 MB/s(以消息 payload 字节计),避免小消息下 msg/s 误导
 - protocol:解码零拷贝(`payload` 为输入子切片);新增直写 `WriteMessage`/`WritePublish`(免整帧拼接拷贝)
 - network:服务端 / 客户端内核读写缓冲可配(`WithReadBuffer`/`WithWriteBuffer`、`WithClientReadBuffer`/`WithClientWriteBuffer`),默认 256 KiB
@@ -38,6 +39,8 @@
 - network:`Client.PublishBatch` / `PublishAsync` / `Batcher`(linger 攒批)/ `Subscription.ReadBatch`
 - protocol:`WriteMessageBatch` 用 writev 一次写多条推送,头缓冲池化(sync.Pool)
 - benchmark:内核 / 端到端基准(参数化 10B/1KiB/64KiB,含 MB/s)与 `benchmark/RESULT.md`
+- docs:详细化 README / ARCHITECTURE / PROTOCOL / ROADMAP;新增 `CONTRIBUTING.md`(分支、提交、发布规范)
+- 项目 logo 与 social preview(`assets/`)
 
 ### 修复
 
