@@ -85,12 +85,16 @@ func run() error {
 
 	start := time.Now()
 	sentBytes := 0
+	batcher := network.NewBatcher(pub, topicName, 512, time.Millisecond)
 	for j := range total {
 		payload := fmt.Appendf(nil, "msg-%d", j)
-		if _, err := pub.Publish(topicName, payload); err != nil {
+		if err := batcher.Add(payload); err != nil {
 			return err
 		}
 		sentBytes += len(payload)
+	}
+	if err := batcher.Close(); err != nil {
+		return err
 	}
 	elapsed := time.Since(start)
 	fmt.Printf("publisher: %d messages / %d B in %v (%.0f msg/s, %.1f MB/s end-to-end)\n",
@@ -128,13 +132,16 @@ func consume(addr string, id int, ready chan<- struct{}) (readerResult, error) {
 	start := time.Now()
 	var last int64
 	recvBytes := 0
-	for range total {
-		m, err := sub.Read()
+	for got := 0; got < total; {
+		msgs, err := sub.ReadBatch(256)
 		if err != nil {
 			return readerResult{}, err
 		}
-		last = m.Offset
-		recvBytes += len(m.Payload)
+		for _, m := range msgs {
+			last = m.Offset
+			recvBytes += len(m.Payload)
+			got++
+		}
 	}
 	return readerResult{id: id, last: last, bytes: recvBytes, elapsed: time.Since(start)}, nil
 }
