@@ -23,6 +23,8 @@ const (
 	defaultReadTimeout = 30 * time.Second
 	// defaultWriteTimeout 限制单批推送的写入时长,写入超时则丢弃该慢订阅者连接。
 	defaultWriteTimeout = 30 * time.Second
+	// defaultSocketBuffer 是连接内核读写缓冲的默认值(可经选项覆盖;0 表示用系统默认)。
+	defaultSocketBuffer = 256 << 10
 )
 
 // Server 是 mq-lite 的 TCP 服务端:每条连接一个 goroutine,
@@ -80,6 +82,8 @@ func NewServer(b *broker.Broker, opts ...ServerOption) *Server {
 		conns:        make(map[net.Conn]context.CancelFunc),
 		readTimeout:  defaultReadTimeout,
 		writeTimeout: defaultWriteTimeout,
+		readBuffer:   defaultSocketBuffer,
+		writeBuffer:  defaultSocketBuffer,
 		closeDone:    make(chan struct{}),
 	}
 	for _, opt := range opts {
@@ -204,6 +208,29 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			if err := s.respond(conn, bw, op, perr, protocol.MarshalOffset(off)); err != nil {
 				return
 			}
+		case protocol.OpPublishBatch:
+			topic, msgs, derr := protocol.DecodePublishBatch(payload)
+			if derr != nil {
+				if err := s.respond(conn, bw, op, derr, nil); err != nil {
+					return
+				}
+				continue
+			}
+			base, perr := s.publishBatch(topic, msgs)
+			if perr != nil {
+				if err := s.respond(conn, bw, op, perr, nil); err != nil {
+					return
+				}
+				continue
+			}
+			if err := s.respond(conn, bw, op, nil, protocol.EncodePublishAck(base, len(msgs))); err != nil {
+				return
+			}
+		case protocol.OpPublishNoAck:
+			topic, msg, derr := protocol.DecodePublish(payload)
+			if derr == nil && len(msg) <= protocol.MaxMessage {
+				_, _ = s.broker.Publish(topic, msg) // fire-and-forget:无响应,失败静默
+			}
 		case protocol.OpSubscribe:
 			sub, serr := s.broker.Subscribe(string(payload))
 			if serr != nil {
@@ -257,33 +284,53 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// stream 从订阅读取消息并逐帧推送给客户端,直到 ctx 取消、订阅/分区关闭或写超时/写失败,
-// 然后返回;调用方据此结束该连接。
+// stream 从订阅读取消息并批量推送给客户端(writev),直到 ctx 取消、订阅/分区关闭或写失败。
 func (s *Server) stream(ctx context.Context, conn net.Conn, bw *bufio.Writer, sub *broker.Subscription) {
 	const batch = 64
+	offsets := make([]int64, 0, batch)
+	payloads := make([][]byte, 0, batch)
 	for {
 		msgs, err := sub.Read(ctx, batch)
 		if err != nil {
 			return
 		}
-		// 写 deadline 必须在整批写入之前设置:bufio 缓冲超过 4KiB 时会在循环内触发底层写,
-		// 若沿用上一轮(可能已过期)的 deadline,空闲后的正常订阅者会被误判为慢客户端而断连。
+		// 写 deadline 必须在整批写入之前设置:否则空闲后大批量写入会命中过期 deadline。
 		if !s.armWrite(conn) {
 			return
 		}
+		offsets = offsets[:0]
+		payloads = payloads[:0]
 		for _, m := range msgs {
-			if err := protocol.WriteMessage(bw, m.Offset, m.Payload); err != nil {
-				// 极端兜底:推送帧超限时先回 OpError 再断,避免订阅者只看到无解释的断连。
-				if errors.Is(err, protocol.ErrTooLarge) {
-					_ = s.respond(conn, bw, protocol.OpError, err, nil)
-				}
-				return
-			}
+			offsets = append(offsets, m.Offset)
+			payloads = append(payloads, m.Payload)
 		}
-		if err := bw.Flush(); err != nil {
+		if err := protocol.WriteMessageBatch(conn, offsets, payloads); err != nil {
+			// 极端兜底:推送超限时先回 OpError 再断,避免订阅者只看到无解释的断连。
+			if errors.Is(err, protocol.ErrTooLarge) {
+				_ = s.respond(conn, bw, protocol.OpError, err, nil)
+			}
 			return
 		}
 	}
+}
+
+// publishBatch 顺序发布一批消息(同 topic),返回首条 offset;任一失败即返回该错误。
+// 偏移在分区锁下连续分配,故整批 offset 为 [base, base+len)。
+func (s *Server) publishBatch(topic string, msgs [][]byte) (int64, error) {
+	var base int64
+	for i, m := range msgs {
+		if len(m) > protocol.MaxMessage {
+			return 0, fmt.Errorf("network: message exceeds MaxMessage (%d): %w", protocol.MaxMessage, protocol.ErrTooLarge)
+		}
+		off, err := s.broker.Publish(topic, m)
+		if err != nil {
+			return 0, err
+		}
+		if i == 0 {
+			base = off
+		}
+	}
+	return base, nil
 }
 
 // respond 写一个响应帧:成功时回与请求相同的 opcode 与 body;
