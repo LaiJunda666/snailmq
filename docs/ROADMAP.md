@@ -11,6 +11,7 @@
 - 内核:New / CreateTopic / Publish / Subscribe / Close;per-partition 锁 + ready 通知
 - 方案:共享有序 log + 独立游标尾随读;最小 `store` 接口(内存实现)
 - 自研二进制协议;标准库 TCP server + client;cmd/demo 一键跑通
+- 协议:批量发布 / 批量 ack、无 ack 发布;客户端攒批(`Batcher`)与批量读;推送 writev + 头缓冲池
 - 单测 + -race、codec fuzz、README 示例、bench + RESULT 报告
 - 验收:demo 跑通;吞吐达万级
 

@@ -32,7 +32,10 @@
 - protocol:`OpError` payload 由纯文本改为"错误码 + 文本";新增 `MaxMessage`(单条消息体上限,与帧上限区分)
 - cmd/demo:吞吐同时打印 msg/s 与 MB/s(以消息 payload 字节计),避免小消息下 msg/s 误导
 - protocol:解码零拷贝(`payload` 为输入子切片);新增直写 `WriteMessage`/`WritePublish`(免整帧拼接拷贝)
-- network:服务端 / 客户端内核读写缓冲可配(`WithReadBuffer`/`WithWriteBuffer`、`WithClientReadBuffer`/`WithClientWriteBuffer`)
+- network:服务端 / 客户端内核读写缓冲可配(`WithReadBuffer`/`WithWriteBuffer`、`WithClientReadBuffer`/`WithClientWriteBuffer`),默认 256 KiB
+- protocol:批量发布 `OpPublishBatch`(单帧批量 ack)与无 ack 发布 `OpPublishNoAck`
+- network:`Client.PublishBatch` / `PublishAsync` / `Batcher`(linger 攒批)/ `Subscription.ReadBatch`
+- protocol:`WriteMessageBatch` 用 writev 一次写多条推送,头缓冲池化(sync.Pool)
 
 ### 修复
 

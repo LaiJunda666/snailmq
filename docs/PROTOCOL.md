@@ -19,8 +19,13 @@ byte 8+    payload
 | 3 OpSubscribe | C→S | topic 名 |
 | 4 OpMessage | S→C | offset(int64 LE)+ payload(前缀 u32len) |
 | 5 OpError | S→C | code(uint16 LE)+ 错误文本(前缀 u32len) |
+| 6 OpPublishBatch | C→S | topic(前缀 u32len)+ count(u32 LE)+ count ×(msg 前缀 u32len) |
+| 7 OpPublishNoAck | C→S | topic(前缀 u32len)+ payload(前缀 u32len);服务端不回响应 |
 
 - 成功响应:服务端回与请求相同 opcode,payload 为空;Publish 成功回 8 字节 offset
+- `OpPublishBatch` 成功响应:同 opcode,payload = base offset(int64 LE)+ count(u32 LE);
+  整批 offset 连续,即 `[base, base+count)`
+- `OpPublishNoAck` 为 fire-and-forget:无任何响应,错误静默(可容忍丢失场景)
 - 失败响应:OpError,payload 为结构化错误码 + 文本(见下)
 - Subscribe 成功后,连接转为该订阅的推送流(逐条 OpMessage),直到连接关闭
 
