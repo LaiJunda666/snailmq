@@ -90,6 +90,71 @@ func UnmarshalOffset(b []byte) (int64, error) {
 	return int64(binary.LittleEndian.Uint64(b[:8])), nil
 }
 
+// EncodePublishAck 生成批量发布 ack 的 payload:[int64 base LE][u32 count LE]。
+func EncodePublishAck(base int64, count int) []byte {
+	b := binary.LittleEndian.AppendUint64(nil, uint64(base))
+	return binary.LittleEndian.AppendUint32(b, uint32(count))
+}
+
+// DecodePublishAck 解析批量发布 ack;不足 12 字节返回 ErrTruncated。
+func DecodePublishAck(b []byte) (base int64, count int, err error) {
+	if len(b) < 12 {
+		return 0, 0, ErrTruncated
+	}
+	return int64(binary.LittleEndian.Uint64(b[0:8])), int(binary.LittleEndian.Uint32(b[8:12])), nil
+}
+
+// EncodePublishBatch 生成 OpPublishBatch 的 payload:
+// [u32 topicLen][topic][u32 count][u32 msgLen][msg]...。
+func EncodePublishBatch(topic string, payloads [][]byte) []byte {
+	b := putString(nil, topic)
+	b = binary.LittleEndian.AppendUint32(b, uint32(len(payloads)))
+	for _, p := range payloads {
+		b = binary.LittleEndian.AppendUint32(b, uint32(len(p)))
+		b = append(b, p...)
+	}
+	return b
+}
+
+// DecodePublishBatch 解析 OpPublishBatch 的 payload。
+// 返回的每个 payload 都是 p 的子切片(零拷贝);截断或计数与实际不符返回 ErrTruncated。
+func DecodePublishBatch(p []byte) (topic string, payloads [][]byte, err error) {
+	if len(p) < 4 {
+		return "", nil, ErrTruncated
+	}
+	tl := int64(binary.LittleEndian.Uint32(p[0:4]))
+	pos := 4
+	if tl > int64(len(p)-pos) {
+		return "", nil, ErrTruncated
+	}
+	topic = string(p[pos : pos+int(tl)])
+	pos += int(tl)
+
+	if len(p)-pos < 4 {
+		return "", nil, ErrTruncated
+	}
+	count := int64(binary.LittleEndian.Uint32(p[pos : pos+4]))
+	pos += 4
+	if count < 0 || count > int64(len(p)-pos)/4 {
+		return "", nil, ErrTruncated
+	}
+
+	payloads = make([][]byte, 0, count)
+	for i := int64(0); i < count; i++ {
+		if len(p)-pos < 4 {
+			return "", nil, ErrTruncated
+		}
+		ml := int64(binary.LittleEndian.Uint32(p[pos : pos+4]))
+		pos += 4
+		if ml > int64(len(p)-pos) {
+			return "", nil, ErrTruncated
+		}
+		payloads = append(payloads, p[pos:pos+int(ml)])
+		pos += int(ml)
+	}
+	return topic, payloads, nil
+}
+
 // EncodeError 生成 OpError 的 payload:[u16 code LE][u32 msgLen][msg]。
 func EncodeError(code Code, msg string) []byte {
 	b := binary.LittleEndian.AppendUint16(nil, uint16(code))

@@ -161,6 +161,81 @@ func TestDecodeZeroCopyAliasesInput(t *testing.T) {
 	}
 }
 
+// TestPublishBatchRoundTrip 验证批量发布 payload 编解码对称且零拷贝。
+func TestPublishBatchRoundTrip(t *testing.T) {
+	body := EncodePublishBatch("t", [][]byte{[]byte("a"), []byte("bb"), []byte("ccc")})
+	topic, payloads, err := DecodePublishBatch(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if topic != "t" || len(payloads) != 3 {
+		t.Fatalf("topic=%q n=%d", topic, len(payloads))
+	}
+	for i, want := range []string{"a", "bb", "ccc"} {
+		if string(payloads[i]) != want {
+			t.Fatalf("payloads[%d]=%q want %q", i, payloads[i], want)
+		}
+	}
+	if len(payloads[0]) > 0 {
+		payloads[0][0] = 'X'
+		// 零拷贝:改写返回切片应影响输入 body。
+		_, again, err := DecodePublishBatch(body)
+		if err != nil || string(again[0]) != "X" {
+			t.Fatalf("batch payload is not a sub-slice of input (again=%q err=%v)", again[0], err)
+		}
+	}
+}
+
+// TestPublishAckRoundTrip 验证批量发布 ack 编解码对称。
+func TestPublishAckRoundTrip(t *testing.T) {
+	base, count, err := DecodePublishAck(EncodePublishAck(1000, 7))
+	if err != nil || base != 1000 || count != 7 {
+		t.Fatalf("base=%d count=%d err=%v", base, count, err)
+	}
+}
+
+// TestWritePublishBatchRoundTrip 验证 WritePublishBatch 直写帧可读回解析。
+func TestWritePublishBatchRoundTrip(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WritePublishBatch(&buf, "t", [][]byte{[]byte("a"), []byte("b")}); err != nil {
+		t.Fatal(err)
+	}
+	op, body, err := ReadFrame(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op != OpPublishBatch {
+		t.Fatalf("op=%d; want OpPublishBatch", op)
+	}
+	_, payloads, err := DecodePublishBatch(body)
+	if err != nil || len(payloads) != 2 || string(payloads[1]) != "b" {
+		t.Fatalf("payloads=%v err=%v", payloads, err)
+	}
+}
+
+// TestWriteMessageBatchRoundTrip 验证 writev 批量写多条 OpMessage 可逐条读回。
+func TestWriteMessageBatchRoundTrip(t *testing.T) {
+	var buf bytes.Buffer
+	offsets := []int64{10, 11, 12}
+	payloads := [][]byte{[]byte("a"), []byte("bb"), []byte("ccc")}
+	if err := WriteMessageBatch(&buf, offsets, payloads); err != nil {
+		t.Fatal(err)
+	}
+	for i := range offsets {
+		op, body, err := ReadFrame(&buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if op != OpMessage {
+			t.Fatalf("op=%d; want OpMessage", op)
+		}
+		off, payload, err := DecodeMessage(body)
+		if err != nil || off != offsets[i] || string(payload) != string(payloads[i]) {
+			t.Fatalf("i=%d off=%d payload=%q err=%v", i, off, payload, err)
+		}
+	}
+}
+
 // TestOffsetRoundTrip 验证 offset 的 8 字节编解码对称。
 func TestOffsetRoundTrip(t *testing.T) {
 	b := MarshalOffset(12345)
