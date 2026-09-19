@@ -22,3 +22,30 @@ jobs:
         run: make test
       - name: build
         run: make build
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          cache: true
+      - name: lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+          golangci-lint run ./...
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          cache: true
+      - name: fuzz smoke
+        run: |
+          go test ./protocol -run '^$' -fuzz=FuzzReadFrame -fuzztime=10s
+          go test ./protocol -run '^$' -fuzz=FuzzDecodePublish -fuzztime=10s
+          go test ./protocol -run '^$' -fuzz=FuzzDecodeMessage -fuzztime=10s
