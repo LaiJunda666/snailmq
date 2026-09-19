@@ -110,6 +110,57 @@ func TestDecodeErrorTruncated(t *testing.T) {
 	}
 }
 
+// TestWriteMessageRoundTrip 验证 WriteMessage 直写出的帧可被读回解析。
+func TestWriteMessageRoundTrip(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteMessage(&buf, 42, []byte("m")); err != nil {
+		t.Fatal(err)
+	}
+	op, body, err := ReadFrame(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op != OpMessage {
+		t.Fatalf("op = %d; want OpMessage", op)
+	}
+	off, payload, err := DecodeMessage(body)
+	if err != nil || off != 42 || string(payload) != "m" {
+		t.Fatalf("off=%d payload=%q err=%v", off, payload, err)
+	}
+}
+
+// TestWritePublishRoundTrip 验证 WritePublish 直写出的帧可被读回解析(含中文 topic)。
+func TestWritePublishRoundTrip(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WritePublish(&buf, "orders.中文", []byte("payload")); err != nil {
+		t.Fatal(err)
+	}
+	op, body, err := ReadFrame(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op != OpPublish {
+		t.Fatalf("op = %d; want OpPublish", op)
+	}
+	topic, payload, err := DecodePublish(body)
+	if err != nil || topic != "orders.中文" || string(payload) != "payload" {
+		t.Fatalf("topic=%q payload=%q err=%v", topic, payload, err)
+	}
+}
+
+// TestDecodeZeroCopyAliasesInput 记录并验证零拷贝语义:返回的 payload 是输入的子切片。
+func TestDecodeZeroCopyAliasesInput(t *testing.T) {
+	body := EncodePublish("t", []byte("hello"))
+	_, payload, err := DecodePublish(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload[0] = 'H' // 修改返回切片即修改输入(零拷贝);调用方须视其为只读。
+	if body[len(body)-len(payload)] != 'H' {
+		t.Fatal("payload is not a sub-slice of input; zero-copy expectation violated")
+	}
+}
+
 // TestOffsetRoundTrip 验证 offset 的 8 字节编解码对称。
 func TestOffsetRoundTrip(t *testing.T) {
 	b := MarshalOffset(12345)

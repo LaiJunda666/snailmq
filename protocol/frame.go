@@ -109,3 +109,61 @@ func WriteFrame(w io.Writer, op Opcode, payload []byte) error {
 	_, err := w.Write(EncodeFrame(op, payload))
 	return err
 }
+
+// WriteFrameHeader 只写 8 字节定长头;payloadLen 超过 MaxPayload 返回 ErrTooLarge。
+func WriteFrameHeader(w io.Writer, op Opcode, payloadLen int) error {
+	if payloadLen > MaxPayload {
+		return ErrTooLarge
+	}
+	var h [HeaderLen]byte
+	binary.LittleEndian.PutUint16(h[0:2], Magic)
+	h[2] = Version
+	h[3] = byte(op)
+	binary.LittleEndian.PutUint32(h[4:8], uint32(payloadLen))
+	_, err := w.Write(h[:])
+	return err
+}
+
+// WriteMessage 直接写出 OpMessage 帧(头 + offset + 长度 + payload),
+// 避免 EncodeMessage/EncodeFrame 拼接整帧带来的额外分配与拷贝。
+func WriteMessage(w io.Writer, offset int64, payload []byte) error {
+	if len(payload) > MaxMessage {
+		return ErrTooLarge
+	}
+	if err := WriteFrameHeader(w, OpMessage, 12+len(payload)); err != nil {
+		return err
+	}
+	var meta [12]byte
+	binary.LittleEndian.PutUint64(meta[0:8], uint64(offset))
+	binary.LittleEndian.PutUint32(meta[8:12], uint32(len(payload)))
+	if _, err := w.Write(meta[:]); err != nil {
+		return err
+	}
+	_, err := w.Write(payload)
+	return err
+}
+
+// WritePublish 直接写出 OpPublish 帧(头 + topic 字段 + payload),避免中间拼接拷贝。
+func WritePublish(w io.Writer, topic string, payload []byte) error {
+	bodyLen := 4 + len(topic) + 4 + len(payload)
+	if bodyLen > MaxPayload {
+		return ErrTooLarge
+	}
+	if err := WriteFrameHeader(w, OpPublish, bodyLen); err != nil {
+		return err
+	}
+	var meta [4]byte
+	binary.LittleEndian.PutUint32(meta[:], uint32(len(topic)))
+	if _, err := w.Write(meta[:]); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, topic); err != nil {
+		return err
+	}
+	binary.LittleEndian.PutUint32(meta[:], uint32(len(payload)))
+	if _, err := w.Write(meta[:]); err != nil {
+		return err
+	}
+	_, err := w.Write(payload)
+	return err
+}

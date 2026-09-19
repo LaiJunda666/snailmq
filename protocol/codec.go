@@ -21,22 +21,6 @@ func getUint32(r *bytes.Reader) (uint32, error) {
 	return binary.LittleEndian.Uint32(b[:]), nil
 }
 
-// getString 从 reader 读 [u32 长度][原始字节];长度不足或声明超长返回 ErrTruncated。
-func getString(r *bytes.Reader) (string, error) {
-	n, err := getUint32(r)
-	if err != nil {
-		return "", err
-	}
-	if int64(n) > int64(r.Len()) {
-		return "", ErrTruncated
-	}
-	buf := make([]byte, n)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return "", ErrTruncated
-	}
-	return string(buf), nil
-}
-
 // EncodePublish 生成 OpPublish 的 payload:[u32 topicLen][topic][u32 msgLen][msg]。
 func EncodePublish(topic string, payload []byte) []byte {
 	var b []byte
@@ -47,26 +31,28 @@ func EncodePublish(topic string, payload []byte) []byte {
 
 // DecodePublish 解析 OpPublish 的 payload,返回 topic 与消息体。
 // 输入截断或长度字段与实际不符时返回 ErrTruncated。
+// 返回的 payload 是 p 的子切片(零拷贝):调用方不得修改,且 p 被复用时应视为失效。
 func DecodePublish(p []byte) (topic string, payload []byte, err error) {
-	r := bytes.NewReader(p)
-
-	topic, err = getString(r)
-	if err != nil {
-		return "", nil, err
-	}
-
-	mlen, err := getUint32(r)
-	if err != nil {
-		return "", nil, err
-	}
-	if int64(mlen) > int64(r.Len()) {
+	if len(p) < 4 {
 		return "", nil, ErrTruncated
 	}
-	buf := make([]byte, mlen)
-	if _, err := io.ReadFull(r, buf); err != nil {
+	tl := int64(binary.LittleEndian.Uint32(p[0:4]))
+	pos := 4
+	if tl > int64(len(p)-pos) {
 		return "", nil, ErrTruncated
 	}
-	return topic, buf, nil
+	topic = string(p[pos : pos+int(tl)])
+	pos += int(tl)
+
+	if len(p)-pos < 4 {
+		return "", nil, ErrTruncated
+	}
+	ml := int64(binary.LittleEndian.Uint32(p[pos : pos+4]))
+	pos += 4
+	if ml > int64(len(p)-pos) {
+		return "", nil, ErrTruncated
+	}
+	return topic, p[pos : pos+int(ml)], nil
 }
 
 // EncodeMessage 生成 OpMessage 的 payload:[int64 offset LE][u32 msgLen][msg]。
@@ -78,30 +64,17 @@ func EncodeMessage(offset int64, payload []byte) []byte {
 
 // DecodeMessage 解析 OpMessage 的 payload,返回 offset 与消息体。
 // 输入不足 12 字节(offset+长度)或消息体截断时返回 ErrTruncated。
+// 返回的 payload 是 p 的子切片(零拷贝):调用方不得修改,且 p 被复用时应视为失效。
 func DecodeMessage(p []byte) (offset int64, payload []byte, err error) {
-	r := bytes.NewReader(p)
-	if r.Len() < 12 {
+	if len(p) < 12 {
 		return 0, nil, ErrTruncated
 	}
-
-	var off [8]byte
-	var mlen [4]byte
-	if _, err := io.ReadFull(r, off[:]); err != nil {
+	offset = int64(binary.LittleEndian.Uint64(p[0:8]))
+	ml := int64(binary.LittleEndian.Uint32(p[8:12]))
+	if ml > int64(len(p)-12) {
 		return 0, nil, ErrTruncated
 	}
-	if _, err := io.ReadFull(r, mlen[:]); err != nil {
-		return 0, nil, ErrTruncated
-	}
-
-	n := binary.LittleEndian.Uint32(mlen[:])
-	if int64(n) > int64(r.Len()) {
-		return 0, nil, ErrTruncated
-	}
-	buf := make([]byte, n)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return 0, nil, ErrTruncated
-	}
-	return int64(binary.LittleEndian.Uint64(off[:])), buf, nil
+	return offset, p[12 : 12+int(ml)], nil
 }
 
 // MarshalOffset 将 offset 编码为 8 字节小端,用于 Publish 成功响应。
