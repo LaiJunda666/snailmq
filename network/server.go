@@ -247,6 +247,26 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) {
 			if derr == nil && len(msg) <= protocol.MaxMessage {
 				_, _ = s.broker.Publish(topic, msg) // fire-and-forget:无响应,失败静默
 			}
+		case protocol.OpListTopics:
+			names, lerr := s.broker.ListTopics()
+			if lerr != nil {
+				if err := s.respond(conn, bw, op, lerr, nil); err != nil {
+					return
+				}
+				continue
+			}
+			body := protocol.EncodeTopics(names)
+			if len(body) > protocol.MaxPayload {
+				// 列表超过单帧上限:回结构化错误,避免直接断连。
+				terr := fmt.Errorf("network: topic list exceeds MaxPayload (%d): %w", protocol.MaxPayload, protocol.ErrTooLarge)
+				if err := s.respond(conn, bw, op, terr, nil); err != nil {
+					return
+				}
+				continue
+			}
+			if err := s.respond(conn, bw, op, nil, body); err != nil {
+				return
+			}
 		case protocol.OpSubscribe:
 			sub, serr := s.broker.Subscribe(string(payload))
 			if serr != nil {
@@ -380,6 +400,12 @@ func errorCode(err error) protocol.Code {
 		return protocol.CodeTopicNotFound
 	case errors.Is(err, broker.ErrTopicNameEmpty):
 		return protocol.CodeEmptyTopicName
+	case errors.Is(err, broker.ErrTopicNameTooLong):
+		return protocol.CodeTopicNameTooLong
+	case errors.Is(err, broker.ErrInvalidTopicName):
+		return protocol.CodeInvalidTopicName
+	case errors.Is(err, broker.ErrTooManyTopics):
+		return protocol.CodeTooManyTopics
 	case errors.Is(err, protocol.ErrTooLarge):
 		return protocol.CodeTooLarge
 	default:

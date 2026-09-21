@@ -317,6 +317,15 @@ func TestRemoteErrorMapping(t *testing.T) {
 	if !errors.Is(remoteError(protocol.CodeClosed, "x"), broker.ErrClosed) {
 		t.Fatal("CodeClosed should map to broker.ErrClosed")
 	}
+	if !errors.Is(remoteError(protocol.CodeTopicNameTooLong, "x"), broker.ErrTopicNameTooLong) {
+		t.Fatal("CodeTopicNameTooLong should map to broker.ErrTopicNameTooLong")
+	}
+	if !errors.Is(remoteError(protocol.CodeInvalidTopicName, "x"), broker.ErrInvalidTopicName) {
+		t.Fatal("CodeInvalidTopicName should map to broker.ErrInvalidTopicName")
+	}
+	if !errors.Is(remoteError(protocol.CodeTooManyTopics, "x"), broker.ErrTooManyTopics) {
+		t.Fatal("CodeTooManyTopics should map to broker.ErrTooManyTopics")
+	}
 }
 
 // TestServerRequestWriteTimeoutClosesStalledClient 验证请求-响应阶段也有写超时:

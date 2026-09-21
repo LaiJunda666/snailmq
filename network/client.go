@@ -135,16 +135,33 @@ func (c *Client) tuneConn() {
 	}
 }
 
-// CreateTopic 创建主题;失败(重名 / 空名 / 名称过长 / 服务端已关闭等)返回结构化错误。
+// CreateTopic 创建主题;失败(重名 / 空名 / 非法或过长名称 / 服务端已关闭等)返回结构化错误。
+// 名称在本地先按 broker.ValidateTopicName 校验,避免无谓往返。
 func (c *Client) CreateTopic(name string) error {
 	if c.closed.Load() {
 		return ErrClosed
 	}
-	if len(name) > broker.MaxTopicNameLen {
-		return fmt.Errorf("network: topic name too long (%d > %d)", len(name), broker.MaxTopicNameLen)
+	if err := broker.ValidateTopicName(name); err != nil {
+		return err
 	}
 	_, err := c.roundTrip(protocol.OpCreateTopic, []byte(name))
 	return err
+}
+
+// ListTopics 返回服务端当前所有 topic 名(按字典序升序)。
+func (c *Client) ListTopics() ([]string, error) {
+	if c.closed.Load() {
+		return nil, ErrClosed
+	}
+	body, err := c.roundTrip(protocol.OpListTopics, nil)
+	if err != nil {
+		return nil, err
+	}
+	names, err := protocol.DecodeTopics(body)
+	if err != nil {
+		return nil, fmt.Errorf("network: list topics response: %w", err)
+	}
+	return names, nil
 }
 
 // Publish 向主题发布一条消息并返回其 offset。
@@ -153,8 +170,8 @@ func (c *Client) Publish(topic string, payload []byte) (int64, error) {
 	if c.closed.Load() {
 		return 0, ErrClosed
 	}
-	if len(topic) > broker.MaxTopicNameLen {
-		return 0, fmt.Errorf("network: topic name too long (%d > %d)", len(topic), broker.MaxTopicNameLen)
+	if err := broker.ValidateTopicName(topic); err != nil {
+		return 0, err
 	}
 	if len(payload) > protocol.MaxMessage {
 		return 0, fmt.Errorf("network: payload %d exceeds MaxMessage %d: %w",
@@ -179,8 +196,8 @@ func (c *Client) PublishBatch(topic string, payloads [][]byte) (base int64, err 
 	if c.closed.Load() {
 		return 0, ErrClosed
 	}
-	if len(topic) > broker.MaxTopicNameLen {
-		return 0, fmt.Errorf("network: topic name too long (%d > %d)", len(topic), broker.MaxTopicNameLen)
+	if err := broker.ValidateTopicName(topic); err != nil {
+		return 0, err
 	}
 	for i, p := range payloads {
 		if len(p) > protocol.MaxMessage {
@@ -322,6 +339,9 @@ func (c *Client) Subscribe(topic string) (*Subscription, error) {
 	if c.streaming {
 		return nil, ErrStreaming
 	}
+	if err := broker.ValidateTopicName(topic); err != nil {
+		return nil, err
+	}
 	if _, err := c.roundTripWriteLocked(protocol.OpSubscribe, func(w *bufio.Writer) error {
 		return protocol.WriteFrame(w, protocol.OpSubscribe, []byte(topic))
 	}); err != nil {
@@ -420,6 +440,12 @@ func remoteError(code protocol.Code, msg string) error {
 		return fmt.Errorf("%s: %w", msg, protocol.ErrTooLarge)
 	case protocol.CodeOverloaded:
 		return fmt.Errorf("%s: %w", msg, ErrOverloaded)
+	case protocol.CodeTopicNameTooLong:
+		return fmt.Errorf("%s: %w", msg, broker.ErrTopicNameTooLong)
+	case protocol.CodeInvalidTopicName:
+		return fmt.Errorf("%s: %w", msg, broker.ErrInvalidTopicName)
+	case protocol.CodeTooManyTopics:
+		return fmt.Errorf("%s: %w", msg, broker.ErrTooManyTopics)
 	default:
 		return errors.New(msg)
 	}

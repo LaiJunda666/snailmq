@@ -155,6 +155,41 @@ func DecodePublishBatch(p []byte) (topic string, payloads [][]byte, err error) {
 	return topic, payloads, nil
 }
 
+// EncodeTopics 生成 OpListTopics 响应的 payload:[u32 count][ (u32 len)(name) ]*count。
+func EncodeTopics(names []string) []byte {
+	b := binary.LittleEndian.AppendUint32(nil, uint32(len(names)))
+	for _, n := range names {
+		b = putString(b, n)
+	}
+	return b
+}
+
+// DecodeTopics 解析 OpListTopics 响应;截断或计数与实际不符返回 ErrTruncated。
+func DecodeTopics(p []byte) ([]string, error) {
+	if len(p) < 4 {
+		return nil, ErrTruncated
+	}
+	count := int64(binary.LittleEndian.Uint32(p[0:4]))
+	pos := 4
+	if count < 0 || count > int64(len(p)-pos)/4 {
+		return nil, ErrTruncated
+	}
+	names := make([]string, 0, count)
+	for i := int64(0); i < count; i++ {
+		if len(p)-pos < 4 {
+			return nil, ErrTruncated
+		}
+		n := int64(binary.LittleEndian.Uint32(p[pos : pos+4]))
+		pos += 4
+		if n > int64(len(p)-pos) {
+			return nil, ErrTruncated
+		}
+		names = append(names, string(p[pos:pos+int(n)]))
+		pos += int(n)
+	}
+	return names, nil
+}
+
 // EncodeError 生成 OpError 的 payload:[u16 code LE][u32 msgLen][msg]。
 func EncodeError(code Code, msg string) []byte {
 	b := binary.LittleEndian.AppendUint16(nil, uint16(code))

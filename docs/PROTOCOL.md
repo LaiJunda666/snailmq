@@ -34,6 +34,7 @@ byte 8+    payload
 | 5 | OpError | S→C | `[u16 code LE][u32 msgLen][msg]` |
 | 6 | OpPublishBatch | C→S | `[u32 topicLen][topic][u32 count][ (u32 msgLen)(msg) ]*count` |
 | 7 | OpPublishNoAck | C→S | `[u32 topicLen][topic][u32 msgLen][msg]`(无响应) |
+| 8 | OpListTopics | C→S | 无;S→C 回 `[u32 count][ (u32 nameLen)(name) ]*count` |
 
 所有 `u32 长度前缀` 采用「长度 + 原始字节」的定长字符串/块编码。
 
@@ -45,6 +46,7 @@ byte 8+    payload
   - `OpPublishBatch`:`[int64 base LE][u32 count]`,整批 offset 连续 `[base, base+count)`
 - **失败**:回 `OpError`(`code + 文本`);客户端据 code 判定错误类别。
 - **`OpPublishNoAck`**:服务端**不回任何响应**;解析/发布失败静默(fire-and-forget,可容忍丢失)。
+- **`OpListTopics`**:成功响应为升序 topic 名列表;broker 已关闭回 `OpError`。
 
 ## 错误码(OpError.code)
 
@@ -57,12 +59,15 @@ byte 8+    payload
 | 4 | topic 名为空 | `broker.ErrTopicNameEmpty` |
 | 5 | 帧/消息超限 | `protocol.ErrTooLarge` |
 | 6 | 服务端过载(连接数超限) | `network.ErrOverloaded` |
+| 7 | topic 名过长 | `broker.ErrTopicNameTooLong` |
+| 8 | topic 名非法(含控制字符) | `broker.ErrInvalidTopicName` |
+| 9 | topic 数量超限 | `broker.ErrTooManyTopics` |
 
 ## 连接状态机
 
 ```
 请求相位(请求-响应)
-   │  OpCreateTopic / OpPublish / OpPublishBatch / OpPublishNoAck
+   │  OpCreateTopic / OpPublish / OpPublishBatch / OpPublishNoAck / OpListTopics
    │  OpSubscribe ──► 回成功响应后
    ▼
 推送相位(单向):服务端持续推送 OpMessage,直到:
@@ -84,5 +89,8 @@ S→C  OpMessage payload = [offset=0][00 00 00 02]"hi"  (推送给订阅者)
 
 ## 版本与兼容
 
-- 帧头 `version` 当前硬校验为 1;引入握手/版本协商前,升级为 flag day(V1 计划)。
-- 新增 opcode/错误码属向后不兼容变更;发布 `v1.0` 前冻结。
+- 帧头 `version` 当前硬校验为 1;尚未引入握手/版本协商(V1 计划)。
+- **新增 opcode / 错误码对旧客户端向后兼容**(旧客户端不会发送新请求);
+  但**旧服务端不认识新 opcode**,按"未知 opcode 忽略、不响应"处理,新客户端调用旧服务端会阻塞到请求读超时
+  (客户端请求相位默认 10s 超时可兜底)。
+- 破坏性帧格式变更仍需 flag day;发布 `v1.0` 前冻结协议。

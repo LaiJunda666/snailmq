@@ -7,6 +7,12 @@
 
 ## [Unreleased]
 
+### 添加
+
+- broker:主题名校验(空 / 超长 / 控制字符)与 `WithMaxTopics` 数量上限;新增 `ListTopics` / `TopicCount`
+- protocol:`OpListTopics` 与 `CodeTopicNameTooLong` / `CodeInvalidTopicName` / `CodeTooManyTopics`
+- network:`Client.ListTopics` 与创建/发布/订阅的本地名称校验
+
 ### 变更
 
 - network:客户端 / 服务端选项的负值在构造期归一为 0(不设超时 / 不限连接 / 用系统默认缓冲),文档统一为 ≤0 语义
