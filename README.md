@@ -168,8 +168,9 @@ m, _ := sub.Read()               // 阻塞直到收到推送
 
 | 方法 | 说明 |
 |---|---|
-| `broker.New(opts ...Option) *Broker` | 创建;`WithStoreFactory` 可注入日志后端 |
-| `(*Broker) CreateTopic(name) error` | 建 topic;空名/重名/过长/已关闭返回对应错误 |
+| `broker.New(opts ...Option) *Broker` | 创建;`WithStoreFactory` 注入日志后端,`WithMaxTopics(n)` 限制 topic 数 |
+| `(*Broker) CreateTopic(name) error` | 建 topic;校验:非空、≤255B、不含控制字符;重名/超限/已关闭返回对应哨兵错误 |
+| `(*Broker) ListTopics() ([]string, error)` / `TopicCount() (int, error)` | 只读枚举(升序)/计数 |
 | `(*Broker) Publish(topic, payload) (int64, error)` | 发布并返回 offset;payload 以引用保存,发布后不得修改 |
 | `(*Broker) Subscribe(topic) (*Subscription, error)` | 新订阅者(游标从 0,可读全量历史) |
 | `(*Broker) SubscriberCount(topic) (int, error)` | 只读订阅数(观测/测试) |
@@ -184,6 +185,7 @@ m, _ := sub.Read()               // 阻塞直到收到推送
 | `(*Server) Serve(ln) error` / `Close() error` | accept 循环 / 幂等关闭(不关 listener) |
 | `network.Dial(addr, opts...) (*Client, error)` | 默认 5s 拨号超时;`DialTimeout` 可自定义 |
 | `(*Client) CreateTopic / Publish / Subscribe / Close` | 请求-响应;关闭后返回 `ErrClosed` |
+| `(*Client) ListTopics() ([]string, error)` | 列出服务端 topic(升序) |
 | `(*Client) PublishBatch(topic, payloads) (base int64, err error)` | 批量发布,单帧批量 ack,offset 连续 `[base, base+n)` |
 | `(*Client) PublishAsync(topic, payload) error` | fire-and-forget,不等 ack |
 | `(*Subscription) Read() (Message, error)` / `ReadBatch(max) ([]Message, error)` | 逐条 / 批量读推送流 |

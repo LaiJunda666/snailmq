@@ -133,11 +133,90 @@ func TestBrokerConcurrentPublishConsistency(t *testing.T) {
 	}
 }
 
-// TestBrokerTopicNameTooLong 验证超长主题名被拒绝。
-func TestBrokerTopicNameTooLong(t *testing.T) {
+// TestBrokerTopicNameValidation 验证主题名校验规则与对应哨兵错误。
+func TestBrokerTopicNameValidation(t *testing.T) {
 	b := New()
-	if err := b.CreateTopic(strings.Repeat("x", MaxTopicNameLen+1)); err == nil {
-		t.Fatal("CreateTopic with too-long name returned nil; want error")
+	invalid := []struct {
+		name string
+		err  error
+	}{
+		{"", ErrTopicNameEmpty},
+		{strings.Repeat("x", MaxTopicNameLen+1), ErrTopicNameTooLong},
+		{strings.Repeat("中", MaxTopicNameLen/3+1), ErrTopicNameTooLong}, // UTF-8 按字节计数
+		{"bad\nname", ErrInvalidTopicName},
+		{"bad\x1fname", ErrInvalidTopicName},
+		{"bad\x7fname", ErrInvalidTopicName},
+	}
+	for _, c := range invalid {
+		if err := b.CreateTopic(c.name); !errors.Is(err, c.err) {
+			t.Errorf("CreateTopic(%.20q…) err = %v; want %v", c.name, err, c.err)
+		}
+	}
+
+	valid := []string{
+		"orders.v1",
+		strings.Repeat("x", MaxTopicNameLen), // 恰好上限
+		"a b",                                // 空格(0x20)合法
+		strings.Repeat("中", MaxTopicNameLen/3),
+	}
+	for i, name := range valid {
+		if err := b.CreateTopic(name); err != nil {
+			t.Fatalf("valid[%d] (len=%d) rejected: %v", i, len(name), err)
+		}
+	}
+}
+
+// TestBrokerMaxTopics 验证 topic 数量上限。
+func TestBrokerMaxTopics(t *testing.T) {
+	b := New(WithMaxTopics(1))
+	if err := b.CreateTopic("a"); err != nil {
+		t.Fatal(err)
+	}
+	// 重复创建已存在 topic 应仍是 ErrTopicExists(重名优先于上限)。
+	if err := b.CreateTopic("a"); !errors.Is(err, ErrTopicExists) {
+		t.Fatalf("recreate at cap err = %v; want ErrTopicExists", err)
+	}
+	if err := b.CreateTopic("b"); !errors.Is(err, ErrTooManyTopics) {
+		t.Fatalf("err = %v; want ErrTooManyTopics", err)
+	}
+
+	for _, max := range []int{0, -1} {
+		unlimited := New(WithMaxTopics(max))
+		for _, n := range []string{"a", "b", "c"} {
+			if err := unlimited.CreateTopic(n); err != nil {
+				t.Fatalf("maxTopics=%d should be unlimited: %v", max, err)
+			}
+		}
+	}
+}
+
+// TestBrokerListTopics 验证只读枚举:升序、计数,关闭后报 ErrClosed。
+func TestBrokerListTopics(t *testing.T) {
+	b := New()
+	if names, err := b.ListTopics(); err != nil || len(names) != 0 {
+		t.Fatalf("empty ListTopics = %v, %v; want empty, nil", names, err)
+	}
+	for _, n := range []string{"b", "a", "c"} {
+		if err := b.CreateTopic(n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	names, err := b.ListTopics()
+	if err != nil || !reflect.DeepEqual(names, []string{"a", "b", "c"}) {
+		t.Fatalf("ListTopics = %v, %v; want [a b c], nil", names, err)
+	}
+	if n, err := b.TopicCount(); err != nil || n != 3 {
+		t.Fatalf("TopicCount = %d, %v; want 3, nil", n, err)
+	}
+
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.ListTopics(); !errors.Is(err, ErrClosed) {
+		t.Fatalf("ListTopics after Close err = %v; want ErrClosed", err)
+	}
+	if _, err := b.TopicCount(); !errors.Is(err, ErrClosed) {
+		t.Fatalf("TopicCount after Close err = %v; want ErrClosed", err)
 	}
 }
 

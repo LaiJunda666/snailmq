@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -311,6 +312,42 @@ func TestSubscriptionReadBatch(t *testing.T) {
 			}
 			got++
 		}
+	}
+}
+
+// TestClientListTopics 验证客户端列出服务端 topic(升序),并能本地拦截非法名。
+func TestClientListTopics(t *testing.T) {
+	addr, _, b := startServer(t)
+
+	c := mustDial(t, addr)
+	if names, err := c.ListTopics(); err != nil || len(names) != 0 {
+		t.Fatalf("empty ListTopics = %v, %v; want empty, nil", names, err)
+	}
+
+	setup := mustDial(t, addr)
+	for _, n := range []string{"b", "a"} {
+		if err := setup.CreateTopic(n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	names, err := c.ListTopics()
+	if err != nil || len(names) != 2 || names[0] != "a" || names[1] != "b" {
+		t.Fatalf("ListTopics = %v, %v; want [a b]", names, err)
+	}
+
+	// broker 关闭后,服务端回 OpError(CodeClosed),客户端应能 errors.Is。
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ListTopics(); !errors.Is(err, broker.ErrClosed) {
+		t.Fatalf("ListTopics after broker Close err = %v; want broker.ErrClosed", err)
+	}
+
+	if err := c.CreateTopic("bad\nname"); !errors.Is(err, broker.ErrInvalidTopicName) {
+		t.Fatalf("invalid name err = %v; want ErrInvalidTopicName", err)
+	}
+	if err := c.CreateTopic(strings.Repeat("x", broker.MaxTopicNameLen+1)); !errors.Is(err, broker.ErrTopicNameTooLong) {
+		t.Fatalf("too-long name err = %v; want ErrTopicNameTooLong", err)
 	}
 }
 

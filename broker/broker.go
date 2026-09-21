@@ -16,6 +16,7 @@ package broker
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -29,19 +30,43 @@ func WithStoreFactory(f func() Store) Option {
 	return func(b *Broker) { b.newStore = f }
 }
 
+// WithMaxTopics 限制可创建的 topic 数量(≤0 表示不限)。
+// 达到上限后 CreateTopic 返回 ErrTooManyTopics。
+func WithMaxTopics(n int) Option {
+	return func(b *Broker) { b.maxTopics = n }
+}
+
 // Broker 是内核门面,组织多个 topic(每 topic 一个分区),线程安全,不依赖网络。
 //
 // 用法:New 创建后先 CreateTopic,再对该 topic Publish / Subscribe;
 // Close 幂等,关闭后所有方法(除重复 Close)返回 ErrClosed。
 type Broker struct {
-	mu       sync.RWMutex
-	closed   bool
-	topics   map[string]*Topic
-	newStore func() Store
+	mu        sync.RWMutex
+	closed    bool
+	topics    map[string]*Topic
+	newStore  func() Store
+	maxTopics int // ≤0 不限
 }
 
 // MaxTopicNameLen 是主题名的最大字节数,防止超长名称带来的分配与存储滥用。
 const MaxTopicNameLen = 255
+
+// ValidateTopicName 校验主题名:非空、≤MaxTopicNameLen 字节、不含 ASCII 控制字符。
+// 不做静默 trim——名称一律按原样使用。
+func ValidateTopicName(name string) error {
+	if name == "" {
+		return ErrTopicNameEmpty
+	}
+	if len(name) > MaxTopicNameLen {
+		return fmt.Errorf("%w (%d > %d)", ErrTopicNameTooLong, len(name), MaxTopicNameLen)
+	}
+	for i := 0; i < len(name); i++ {
+		if b := name[i]; b < 0x20 || b == 0x7F {
+			return fmt.Errorf("%w: control character at byte %d", ErrInvalidTopicName, i)
+		}
+	}
+	return nil
+}
 
 // Topic 是一个已创建的消息主题,内部承载其唯一的 Partition。
 type Topic struct {
@@ -63,9 +88,10 @@ func New(opts ...Option) *Broker {
 	return b
 }
 
-// CreateTopic 创建主题。同名返回 ErrTopicExists;空名返回 ErrTopicNameEmpty;
-// 名称超过 MaxTopicNameLen 返回错误;broker 已关闭返回包装后的 ErrClosed(可用 errors.Is 判断)。
-// 创建后才能对该主题 Publish / Subscribe。
+// CreateTopic 创建主题。校验规则:非空、≤MaxTopicNameLen 字节、不含 ASCII 控制字符;
+// 违规分别返回 ErrTopicNameEmpty / ErrTopicNameTooLong / ErrInvalidTopicName。
+// 同名返回 ErrTopicExists;超过 WithMaxTopics 上限返回 ErrTooManyTopics;
+// broker 已关闭返回包装后的 ErrClosed(可用 errors.Is 判断)。
 func (b *Broker) CreateTopic(name string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -73,16 +99,14 @@ func (b *Broker) CreateTopic(name string) error {
 	if b.closed {
 		return fmt.Errorf("broker: create topic %q: %w", name, ErrClosed)
 	}
-
-	if name == "" {
-		return ErrTopicNameEmpty
+	if err := ValidateTopicName(name); err != nil {
+		return err
 	}
-	if len(name) > MaxTopicNameLen {
-		return fmt.Errorf("broker: topic name too long (%d > %d)", len(name), MaxTopicNameLen)
-	}
-
 	if _, ok := b.topics[name]; ok {
 		return ErrTopicExists
+	}
+	if b.maxTopics > 0 && len(b.topics) >= b.maxTopics {
+		return fmt.Errorf("broker: create topic %q: %w", name, ErrTooManyTopics)
 	}
 
 	store := b.newStore()
@@ -145,6 +169,34 @@ func (b *Broker) SubscriberCount(topic string) (int, error) {
 	return t.partition.subscriberCount(), nil
 }
 
+// ListTopics 返回当前所有 topic 名(按字典序升序)。
+// broker 已关闭返回 ErrClosed。
+func (b *Broker) ListTopics() ([]string, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, fmt.Errorf("broker: list topics: %w", ErrClosed)
+	}
+	names := make([]string, 0, len(b.topics))
+	for name := range b.topics {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// TopicCount 返回当前 topic 数量;broker 已关闭返回 ErrClosed。
+func (b *Broker) TopicCount() (int, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return 0, fmt.Errorf("broker: topic count: %w", ErrClosed)
+	}
+	return len(b.topics), nil
+}
+
 // wrapClosed 仅在 err 为 ErrClosed 时补上操作与 topic 上下文,
 // 保留 errors.Is 判定能力;其它错误原样返回。
 func wrapClosed(op, topic string, err error) error {
@@ -155,7 +207,7 @@ func wrapClosed(op, topic string, err error) error {
 }
 
 // Close 关闭 broker:幂等,关闭所有主题的分区并唤醒其订阅者。
-// 重复调用返回 nil;关闭后的其它操作(CreateTopic/Publish/Subscribe)返回包装后的 ErrClosed。
+// 重复调用返回 nil;关闭后的其它操作(CreateTopic/Publish/Subscribe/ListTopics 等)返回包装后的 ErrClosed。
 func (b *Broker) Close() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()

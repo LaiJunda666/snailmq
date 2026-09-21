@@ -16,6 +16,15 @@ var ErrClosed = errors.New("broker: closed")
 // ErrTopicNameEmpty 表示 CreateTopic 传入了空主题名。
 var ErrTopicNameEmpty = errors.New("broker: empty topic name")
 
+// ErrTopicNameTooLong 表示 CreateTopic 的主题名超过 MaxTopicNameLen 字节。
+var ErrTopicNameTooLong = errors.New("broker: topic name too long")
+
+// ErrInvalidTopicName 表示 CreateTopic 的主题名含非法字符(如 ASCII 控制字符)。
+var ErrInvalidTopicName = errors.New("broker: invalid topic name")
+
+// ErrTooManyTopics 表示已达到 Broker 的 topic 数量上限(WithMaxTopics)。
+var ErrTooManyTopics = errors.New("broker: too many topics")
+
 // ErrTopicExists 表示创建 topic 时同名 topic 已存在。
 var ErrTopicExists = errors.New("broker: topic already exists")
 

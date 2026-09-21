@@ -194,6 +194,18 @@ func TestPublishAckRoundTrip(t *testing.T) {
 	}
 }
 
+// TestTopicsRoundTrip 验证 topic 列表编解码对称与截断处理。
+func TestTopicsRoundTrip(t *testing.T) {
+	body := EncodeTopics([]string{"orders", "events.中文"})
+	names, err := DecodeTopics(body)
+	if err != nil || len(names) != 2 || names[0] != "orders" || names[1] != "events.中文" {
+		t.Fatalf("names = %v, %v", names, err)
+	}
+	if _, err := DecodeTopics(body[:3]); !errors.Is(err, ErrTruncated) {
+		t.Fatalf("truncated err = %v; want ErrTruncated", err)
+	}
+}
+
 // TestWritePublishBatchRoundTrip 验证 WritePublishBatch 直写帧可读回解析。
 func TestWritePublishBatchRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
