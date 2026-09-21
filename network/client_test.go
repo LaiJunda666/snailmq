@@ -314,6 +314,28 @@ func TestSubscriptionReadBatch(t *testing.T) {
 	}
 }
 
+// TestClientNegativeOptionsClamped 验证非法(负)选项被归一为 0,不 panic 且连接可用。
+func TestClientNegativeOptionsClamped(t *testing.T) {
+	addr, _, _ := startServer(t)
+	c, err := Dial(addr,
+		WithClientReadTimeout(-1),
+		WithClientWriteTimeout(-1),
+		WithClientReadBuffer(-1),
+		WithClientWriteBuffer(-1),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	if err := c.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Publish("t", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestDialTimeout 验证带超时的 Dial 可正常连接,且连接失败会返回错误。
 func TestDialTimeout(t *testing.T) {
 	addr, _, _ := startServer(t)

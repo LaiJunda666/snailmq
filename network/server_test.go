@@ -231,6 +231,40 @@ func (l *singleConnListener) Close() error {
 
 func (l *singleConnListener) Addr() net.Addr { return stubAddr{} }
 
+// TestServerNegativeOptionsClamped 验证非法(负)选项被归一为 0,服务端仍可正常收发。
+func TestServerNegativeOptionsClamped(t *testing.T) {
+	b := broker.New()
+	srv := NewServer(b,
+		WithReadTimeout(-1),
+		WithWriteTimeout(-1),
+		WithMaxConns(-1),
+		WithReadBuffer(-1),
+		WithWriteBuffer(-1),
+	)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() {
+		_ = srv.Close()
+		_ = ln.Close()
+	})
+	addr := ln.Addr().String()
+	if err := b.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := Dial(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	if _, err := c.Publish("t", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestServerMaxConns 验证连接数达上限时,新连接被拒绝且不计入活跃连接。
 func TestServerMaxConns(t *testing.T) {
 	b := broker.New()

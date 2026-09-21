@@ -49,28 +49,28 @@ type Server struct {
 // ServerOption 配置 Server,仅应在 NewServer 时传入。
 type ServerOption func(*Server)
 
-// WithReadTimeout 设置单次读帧的等待超时(0 表示不设)。
+// WithReadTimeout 设置单次读帧的等待超时(≤0 表示不设)。
 func WithReadTimeout(d time.Duration) ServerOption {
 	return func(s *Server) { s.readTimeout = d }
 }
 
-// WithWriteTimeout 设置单批推送的写入超时(0 表示不设)。
+// WithWriteTimeout 设置单批推送的写入超时(≤0 表示不设)。
 func WithWriteTimeout(d time.Duration) ServerOption {
 	return func(s *Server) { s.writeTimeout = d }
 }
 
-// WithMaxConns 设置最大并发连接数(0 表示不限)。达到上限时新连接收到 OpError 后断开。
+// WithMaxConns 设置最大并发连接数(≤0 表示不限)。达到上限时新连接收到 OpError 后断开。
 func WithMaxConns(n int) ServerOption {
 	return func(s *Server) { s.maxConns = n }
 }
 
-// WithReadBuffer 设置每个连接的内核读缓冲字节数(0 表示用系统默认);
+// WithReadBuffer 设置每个连接的内核读缓冲字节数(≤0 表示用系统默认);
 // 大消息高吞吐场景可放大以减少系统调用与窗口抖动。
 func WithReadBuffer(n int) ServerOption {
 	return func(s *Server) { s.readBuffer = n }
 }
 
-// WithWriteBuffer 设置每个连接的内核写缓冲字节数(0 表示用系统默认)。
+// WithWriteBuffer 设置每个连接的内核写缓冲字节数(≤0 表示用系统默认)。
 func WithWriteBuffer(n int) ServerOption {
 	return func(s *Server) { s.writeBuffer = n }
 }
@@ -88,6 +88,22 @@ func NewServer(b *broker.Broker, opts ...ServerOption) *Server {
 	}
 	for _, opt := range opts {
 		opt(s)
+	}
+	// 归一化非法(负)配置:负值与 0 同义(不设超时 / 不限连接 / 用系统默认缓冲)。
+	if s.readTimeout < 0 {
+		s.readTimeout = 0
+	}
+	if s.writeTimeout < 0 {
+		s.writeTimeout = 0
+	}
+	if s.maxConns < 0 {
+		s.maxConns = 0
+	}
+	if s.readBuffer < 0 {
+		s.readBuffer = 0
+	}
+	if s.writeBuffer < 0 {
+		s.writeBuffer = 0
 	}
 	return s
 }
