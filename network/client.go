@@ -32,23 +32,23 @@ var (
 // ClientOption 配置 Client,仅应在 Dial/DialTimeout 时传入。
 type ClientOption func(*Client)
 
-// WithClientReadTimeout 设置请求-响应相位的读超时(0 表示不设)。
+// WithClientReadTimeout 设置请求-响应相位的读超时(≤0 表示不设)。
 // 注意:进入推送流后的 Subscription.Read 不受此限制(空闲等待新消息是合法的)。
 func WithClientReadTimeout(d time.Duration) ClientOption {
 	return func(c *Client) { c.readTimeout = d }
 }
 
-// WithClientWriteTimeout 设置请求-响应相位的写超时(0 表示不设)。
+// WithClientWriteTimeout 设置请求-响应相位的写超时(≤0 表示不设)。
 func WithClientWriteTimeout(d time.Duration) ClientOption {
 	return func(c *Client) { c.writeTimeout = d }
 }
 
-// WithClientReadBuffer 设置连接的内核读缓冲字节数(0 表示用系统默认)。
+// WithClientReadBuffer 设置连接的内核读缓冲字节数(≤0 表示用系统默认)。
 func WithClientReadBuffer(n int) ClientOption {
 	return func(c *Client) { c.readBuffer = n }
 }
 
-// WithClientWriteBuffer 设置连接的内核写缓冲字节数(0 表示用系统默认)。
+// WithClientWriteBuffer 设置连接的内核写缓冲字节数(≤0 表示用系统默认)。
 func WithClientWriteBuffer(n int) ClientOption {
 	return func(c *Client) { c.writeBuffer = n }
 }
@@ -100,6 +100,19 @@ func DialTimeout(addr string, timeout time.Duration, opts ...ClientOption) (*Cli
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	// 归一化非法(负)配置:负值与 0 同义(不设超时 / 用系统默认缓冲),避免静默关闭保护。
+	if c.readTimeout < 0 {
+		c.readTimeout = 0
+	}
+	if c.writeTimeout < 0 {
+		c.writeTimeout = 0
+	}
+	if c.readBuffer < 0 {
+		c.readBuffer = 0
+	}
+	if c.writeBuffer < 0 {
+		c.writeBuffer = 0
 	}
 	c.tuneConn()
 	return c, nil

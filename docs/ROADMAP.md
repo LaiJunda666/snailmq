@@ -29,6 +29,8 @@
 - 客户端:单连接多路复用(一连接多订阅);`Subscription.Read(ctx)` 支持取消/限时。
 - 生产韧性:心跳/半开连接检测、慢消费者策略(Drop|Disconnect|Block)、优雅排空关闭(`CloseWithContext`/drain)。
 - 可观测:可选注入 Logger/Metrics + `Server.Stats()`(含订阅滞后指标),保持零依赖。
+- API 规范:`Option` 改为可校验(`func(*config) error` 或 `Config + Validate()`),启动期暴露非法配置;
+  超时/上限用显式 `NoTimeout` / `Unlimited` 常量替代魔法值 0(当前负值已在构造期归一为 0)。
 
 ## V2 — consumer group 竞争消费
 
