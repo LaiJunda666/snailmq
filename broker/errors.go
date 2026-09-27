@@ -25,6 +25,9 @@ var ErrInvalidTopicName = errors.New("broker: invalid topic name")
 // ErrTooManyTopics 表示已达到 Broker 的 topic 数量上限(WithMaxTopics)。
 var ErrTooManyTopics = errors.New("broker: too many topics")
 
+// ErrInvalidAckOffset 表示 Ack 收到负数 offset。
+var ErrInvalidAckOffset = errors.New("broker: invalid ack offset")
+
 // ErrTopicExists 表示创建 topic 时同名 topic 已存在。
 var ErrTopicExists = errors.New("broker: topic already exists")
 

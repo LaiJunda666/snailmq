@@ -10,6 +10,7 @@
 ### 添加
 
 - broker:新增 `PublishBatch`(单次分区锁内追加整批,保证 offset 连续)
+- broker:订阅游标与提交水位分离(`cursor`/`committed`)与累积确认 `Ack(upTo)`(未来位点 clamp、陈旧 ack no-op、负值拒绝)
 
 ### 变更
 

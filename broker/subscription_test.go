@@ -209,6 +209,73 @@ func TestReadAfterCloseReturnsErrClosed(t *testing.T) {
 	}
 }
 
+// TestAckAccumulatesAndAdvancesCommitted 验证累积确认与陈旧 ack no-op。
+func TestAckAccumulatesAndAdvancesCommitted(t *testing.T) {
+	p := newPartition(newMemoryLog())
+	for _, s := range []string{"a", "b", "c", "d", "e"} {
+		if _, err := p.Publish([]byte(s)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sub, _ := p.Subscribe()
+	if _, err := sub.Read(context.Background(), 5); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sub.Ack(2); err != nil {
+		t.Fatal(err)
+	}
+	if sub.committed != 3 { // 累积到 upTo=2,故 committed=3
+		t.Fatalf("committed = %d; want 3", sub.committed)
+	}
+	if err := sub.Ack(1); err != nil { // 陈旧 ack:no-op
+		t.Fatal(err)
+	}
+	if sub.committed != 3 {
+		t.Fatalf("stale ack changed committed to %d; want 3", sub.committed)
+	}
+}
+
+// TestAckFutureOffsetClampedToCursor 验证未来位点被 clamp 到 cursor。
+func TestAckFutureOffsetClampedToCursor(t *testing.T) {
+	p := newPartition(newMemoryLog())
+	if _, err := p.Publish([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	sub, _ := p.Subscribe()
+	if _, err := sub.Read(context.Background(), 1); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sub.Ack(100); err != nil { // 未来位点:clamp 到 cursor=1
+		t.Fatal(err)
+	}
+	if sub.committed != 1 {
+		t.Fatalf("committed = %d; want 1", sub.committed)
+	}
+}
+
+// TestAckNegativeOffsetRejected 验证负 offset 被拒。
+func TestAckNegativeOffsetRejected(t *testing.T) {
+	p := newPartition(newMemoryLog())
+	sub, _ := p.Subscribe()
+	if err := sub.Ack(-1); !errors.Is(err, ErrInvalidAckOffset) {
+		t.Fatalf("err = %v; want ErrInvalidAckOffset", err)
+	}
+}
+
+// TestAckAfterCloseErrors 验证关闭后 Ack 返回 ErrClosed。
+func TestAckAfterCloseErrors(t *testing.T) {
+	p := newPartition(newMemoryLog())
+	sub, _ := p.Subscribe()
+	if err := sub.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := sub.Ack(0); !errors.Is(err, ErrClosed) {
+		t.Fatalf("err = %v; want ErrClosed", err)
+	}
+}
+
 // readAll 读取 total 条消息并返回 payload;timeout 秒超时(0 表示默认 2 秒)。
 func readAll(t *testing.T, s *Subscription, total int, timeout time.Duration) []string {
 	t.Helper()
