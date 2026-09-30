@@ -27,18 +27,20 @@ var (
 	ErrClosed = errors.New("network: client closed")
 	// ErrOverloaded 表示服务端连接数已达上限,拒绝新连接。
 	ErrOverloaded = errors.New("network: server overloaded")
+	// ErrEmptyBatch 表示 PublishBatch 收到空列表。
+	ErrEmptyBatch = errors.New("network: empty publish batch")
 )
 
 // ClientOption 配置 Client,仅应在 Dial/DialTimeout 时传入。
 type ClientOption func(*Client)
 
-// WithClientReadTimeout 设置请求-响应相位的读超时(≤0 表示不设)。
+// WithClientReadTimeout 设置请求-响应相位的读超时(≤0,含负值,表示不设)。
 // 注意:进入推送流后的 Subscription.Read 不受此限制(空闲等待新消息是合法的)。
 func WithClientReadTimeout(d time.Duration) ClientOption {
 	return func(c *Client) { c.readTimeout = d }
 }
 
-// WithClientWriteTimeout 设置请求-响应相位的写超时(≤0 表示不设)。
+// WithClientWriteTimeout 设置请求-响应相位的写超时(≤0,含负值,表示不设)。
 func WithClientWriteTimeout(d time.Duration) ClientOption {
 	return func(c *Client) { c.writeTimeout = d }
 }
@@ -196,6 +198,9 @@ func (c *Client) PublishBatch(topic string, payloads [][]byte) (base int64, err 
 	if c.closed.Load() {
 		return 0, ErrClosed
 	}
+	if len(payloads) == 0 {
+		return 0, ErrEmptyBatch
+	}
 	if err := broker.ValidateTopicName(topic); err != nil {
 		return 0, err
 	}
@@ -223,6 +228,7 @@ func (c *Client) PublishBatch(topic string, payloads [][]byte) (base int64, err 
 
 // PublishAsync 以 fire-and-forget 方式发布一条消息:不等待 ack,失败也无法同步感知。
 // 适用于可容忍丢失的吞吐场景;streaming 或已关闭时返回错误。
+// topic 名与 payload 会在本地按与 Publish 相同的规则校验(非法名/超限直接返回错误)。
 func (c *Client) PublishAsync(topic string, payload []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -232,6 +238,13 @@ func (c *Client) PublishAsync(topic string, payload []byte) error {
 	}
 	if c.streaming {
 		return ErrStreaming
+	}
+	if err := broker.ValidateTopicName(topic); err != nil {
+		return err
+	}
+	if len(payload) > protocol.MaxMessage {
+		return fmt.Errorf("network: payload %d exceeds MaxMessage %d: %w",
+			len(payload), protocol.MaxMessage, protocol.ErrTooLarge)
 	}
 	if c.writeTimeout > 0 {
 		_ = c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))

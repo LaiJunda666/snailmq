@@ -7,6 +7,14 @@
 
 ## [Unreleased]
 
+### 变更
+
+- network:`PublishBatch` 空列表返回 `ErrEmptyBatch`(此前返回 `(0, nil)`)
+
+### 修复
+
+- network:`PublishAsync` 补齐与 `Publish` 一致的本地校验(非法/过长 topic、超限 payload),不再发往服务端被静默丢弃
+
 ## [0.2.0] - 2026-09-21
 
 ### 添加

@@ -239,6 +239,42 @@ func TestClientPublishAsync(t *testing.T) {
 	}
 }
 
+// TestClientPublishAsyncValidatesLocally 验证 PublishAsync 与 Publish 一样做本地校验,
+// 非法 topic/超限 payload 直接报错,而非发往服务端被静默丢弃。
+func TestClientPublishAsyncValidatesLocally(t *testing.T) {
+	addr, _, _ := startServer(t)
+	c := mustDial(t, addr)
+	if err := c.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.PublishAsync("bad\nname", []byte("x")); !errors.Is(err, broker.ErrInvalidTopicName) {
+		t.Fatalf("invalid topic err = %v; want ErrInvalidTopicName", err)
+	}
+	long := strings.Repeat("x", broker.MaxTopicNameLen+1)
+	if err := c.PublishAsync(long, []byte("x")); !errors.Is(err, broker.ErrTopicNameTooLong) {
+		t.Fatalf("long topic err = %v; want ErrTopicNameTooLong", err)
+	}
+	if err := c.PublishAsync("t", make([]byte, protocol.MaxMessage+1)); !errors.Is(err, protocol.ErrTooLarge) {
+		t.Fatalf("oversized payload err = %v; want protocol.ErrTooLarge", err)
+	}
+	if err := c.PublishAsync("t", []byte("ok")); err != nil {
+		t.Fatalf("valid PublishAsync err = %v; want nil", err)
+	}
+}
+
+// TestClientPublishBatchRejectsEmpty 验证空批返回 ErrEmptyBatch(而非 (0,nil))。
+func TestClientPublishBatchRejectsEmpty(t *testing.T) {
+	addr, _, _ := startServer(t)
+	c := mustDial(t, addr)
+	if err := c.CreateTopic("t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.PublishBatch("t", nil); !errors.Is(err, ErrEmptyBatch) {
+		t.Fatalf("err = %v; want ErrEmptyBatch", err)
+	}
+}
+
 // TestBatcher 验证攒批发布:达到 maxBatch 或 Close 时 flush,offset 连续。
 func TestBatcher(t *testing.T) {
 	addr, _, _ := startServer(t)
