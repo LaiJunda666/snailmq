@@ -24,4 +24,4 @@
 - 协议等敏感改动需额外通过 `make test`(含 `-race`)与 fuzz 冒烟。
 - 完整流程见 CONTRIBUTING.md。
 
-路线:V0 全内存广播闭环 → V1 ack/重投 → V2 消费组 → V3 WAL → V4 raft → V5 发布 v1.0(详见 docs/ROADMAP.md)。
+路线:**版本以 CHANGELOG / git tag 为准**;后续方向以主题呈现,详见 docs/ROADMAP.md。

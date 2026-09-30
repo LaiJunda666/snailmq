@@ -35,18 +35,10 @@ SnailMQ 是一个轻量单机消息队列,以单个 Go 模块提供「发布 →
 
 ## 状态与路线
 
-当前 **V0:最小闭环 — 全内存广播**,已实现协议 5/6/7 号 opcode、批量与端到端。
+最新发布:**v0.2.0**(完整变更见 [CHANGELOG.md](CHANGELOG.md))。
 
-| 版本 | 主题 |
-|---|---|
-| **V0** | 最小闭环:全内存广播 + 自研协议 + TCP server/client + demo + bench |
-| V1 | 可靠消费:ack / at-least-once、重投 |
-| V2 | consumer group 竞争消费、多分区 |
-| V3 | WAL 持久化(磁盘 Store、retention) |
-| V4 | raft 集群 |
-| V5 | 打磨发布 v1.0 |
-
-详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+后续方向以**主题**呈现(不与版本号绑定,避免与 tag 混淆),详见 [docs/ROADMAP.md](docs/ROADMAP.md):
+可靠消费(ack / at-least-once,进行中)、协议演进与客户端能力、生产韧性与可观测、消费组与多分区、持久化(WAL)、集群(raft)、发布 v1.0。
 
 ## 架构
 
