@@ -49,12 +49,12 @@ type Server struct {
 // ServerOption 配置 Server,仅应在 NewServer 时传入。
 type ServerOption func(*Server)
 
-// WithReadTimeout 设置单次读帧的等待超时(≤0 表示不设)。
+// WithReadTimeout 设置单次读帧的等待超时(≤0,含负值,表示不设)。
 func WithReadTimeout(d time.Duration) ServerOption {
 	return func(s *Server) { s.readTimeout = d }
 }
 
-// WithWriteTimeout 设置单批推送的写入超时(≤0 表示不设)。
+// WithWriteTimeout 设置单批推送的写入超时(≤0,含负值,表示不设)。
 func WithWriteTimeout(d time.Duration) ServerOption {
 	return func(s *Server) { s.writeTimeout = d }
 }
