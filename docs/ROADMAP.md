@@ -19,18 +19,36 @@
 - 工程:单测 + `-race`、fuzz、CI(fmt/vet/test/build)、`cmd/demo`、`benchmark` + `RESULT.md`。
 - **验收**:`make demo` 跑通;吞吐与资源数据见 `benchmark/RESULT.md`。
 
-## V1 — 可靠消费:ack / at-least-once
+## V1 — 可靠消费:ack / at-least-once(分阶段)
 
-目标:订阅者显式确认,未确认超时重投。
+目标:订阅者显式确认,未确认超时重投;分 V1a/V1b/V1c 三步交付(设计与任务见 `docs/superpowers/`)。
 
-- 内核:读游标与提交游标分离;`Subscription.Ack(offset)` / `Commit`;in-flight 窗口与可见性超时;at-least-once 语义文档化。
-- 重构:读逻辑收进 `Partition.read`,便于挂载 ack/in-flight 状态。
-- 协议:ack/commit opcode;协议版本协商(握手帧,`ReadHeader` 放宽为已知版本集合);错误码扩展(Internal/Backpressure/Unsupported/ProtocolViolation/SlowConsumer)。
-- 客户端:单连接多路复用(一连接多订阅);`Subscription.Read(ctx)` 支持取消/限时。
-- 生产韧性:心跳/半开连接检测、慢消费者策略(Drop|Disconnect|Block)、优雅排空关闭(`CloseWithContext`/drain)。
+### V1a — 核心可靠消费(进行中)
+
+- 内核:`cursor`/`committed` 分离,累积 `Ack(upTo)`;可见性超时重投(默认关闭,`WithVisibilityTimeout` 选入)。
+- 协议:`OpAck`;`OpSubscribe` 携带可见性字段(兼容旧客户端)。
+- 网络:订阅相位升级为双向(推送 + ack 读取协程);客户端拆分写锁,支持读/ack 并发。
+- 文档:at-least-once 语义与边界(内存态、重启丢失)。
+
+### V1b — 协议演进与客户端能力
+
+- 协议版本协商/握手(未知 opcode 明确拒绝语义);错误码扩展(Internal/Backpressure/Unsupported/ProtocolViolation/SlowConsumer)。
+- 客户端单连接多路复用(一连接多订阅);`Subscription.Read(ctx)` 取消/限时。
+- 推送读侧与请求路径彻底解耦(读不再持客户端状态锁,仅在单订阅模型下成立的问题一并消除)。
+
+### V1c — 生产韧性与可观测
+
+- 心跳/半开连接检测;慢消费者策略(Drop|Disconnect|Block);优雅排空关闭(`CloseWithContext`/drain)。
 - 可观测:可选注入 Logger/Metrics + `Server.Stats()`(含订阅滞后指标),保持零依赖。
-- API 规范:`Option` 改为可校验(`func(*config) error` 或 `Config + Validate()`),启动期暴露非法配置;
-  超时/上限用显式 `NoTimeout` / `Unlimited` 常量替代魔法值 0(当前负值已在构造期归一为 0)。
+- API 规范:`Option` 改为可校验(`func(*config) error` 或 `Config + Validate()`);`NoTimeout`/`Unlimited` 常量替代魔法 0。
+- 性能/健壮 backlog:
+  - `memoryLog.Read` 支持 caller-buffer,减少热路径分配;
+  - 缩小 `Read` 的锁范围(锁内取偏移、锁外拷贝),批量大时不再阻塞 `Publish`;
+  - 推流批量大小可配(当前硬编码 64);
+  - `WithCopyOnPublish` 可选拷贝,缓解 payload 别名 footgun;
+  - `Store` 契约测试套件/可选校验包装,校验自定义实现不回乱序/负 offset;
+  - `ErrClosed` 语义拆分(写拒绝 vs 读终态)或 typed error;
+  - 单读者重入守卫(调试构建可选)。
 
 ## V2 — consumer group 竞争消费
 
@@ -39,6 +57,8 @@
 - 内核:多分区 `Topic`(`CreateTopic(name, WithPartitions(n))`);`Publish(topic, key, payload)` 按 key 路由。
 - 协议:订阅/推送带 partition 标识;组协调 opcode。
 - 组管理:成员心跳、分区分配、超时接管;组位点用独立 `OffsetStore`/`MetaStore`,不复用消息 `Store`。
+- topic 生命周期:删除 topic(与 retention 协同设计)。
+- 广播唤醒优化:`Partition.Publish` 当前在锁内对每个订阅者发信号(O(subs));考虑单通道/分片降低开销。
 - 安全:多租户/公网前补 TLS 与认证授权。
 
 ## V3 — WAL 持久化

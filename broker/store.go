@@ -6,6 +6,7 @@ package broker
 //   - Store 不自带并发安全,也不保证方法间原子性;
 //     所有方法必须由单一所有权方串行调用——本实现中即 Partition 在持 partition.mu 时调用。
 //   - 日志按 offset 单调追加、只增不删;Append 返回的下一个 offset 即 Len()。
+//   - offset 为 int64;实际可表示范围受日志长度(可用内存)限制,并非支持 2^63 条。
 //   - 返回的 Message 必须视为只读:Payload 字节会在所有订阅者之间共享,
 //     修改它会污染其他读者,调用方严禁写回。
 type Store interface {

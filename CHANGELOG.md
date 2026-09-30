@@ -10,6 +10,7 @@
 ### 变更
 
 - network:`PublishBatch` 空列表返回 `ErrEmptyBatch`(此前返回 `(0, nil)`)
+- broker:`Subscription.Read` 文档明确"有数据时优先返回、ctx 取消仅在无数据阻塞时生效";`Store` 文档说明 offset 为 int64 且受日志长度限制;超时选项文档明确负值等同 0
 
 ### 修复
 
