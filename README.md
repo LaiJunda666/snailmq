@@ -19,7 +19,7 @@ SnailMQ 是一个轻量单机消息队列,以单个 Go 模块提供「发布 →
 - **两种用法**:内嵌 `broker` 库,或运行标准库 TCP 服务并使用官方 `network` 客户端。
 - **可演进**:`Store` 接口通向 WAL;游标模型通向 ack/消费组;传输预留 netpoll。
 
-**当前状态**:V0 全内存广播已闭环,`make demo` 一键跑通;端到端吞吐随消息大小与批大小变化
+**当前状态**:全内存广播已闭环,`make demo` 一键跑通;端到端吞吐随消息大小与批大小变化
 (小消息批量下最高,详见 [benchmark/RESULT.md](benchmark/RESULT.md))。下一步 ack / 消费组 / WAL / raft,详见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 **快速开始**:`make demo` · **协议**:[docs/PROTOCOL.md](docs/PROTOCOL.md) · **架构**:[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · **贡献**:[CONTRIBUTING.md](CONTRIBUTING.md)
@@ -27,7 +27,7 @@ SnailMQ 是一个轻量单机消息队列,以单个 Go 模块提供「发布 →
 ## 特性
 
 - **广播 + 独立游标**:每个 topic 一个分区,订阅者各自维护 offset,互不影响。
-- **零三方依赖**:仅用 Go 标准库(唯一例外是 V4 的 `etcd/raft`,尚未引入)。
+- **零三方依赖**:仅用 Go 标准库;唯一计划引入的三方例外是集群(raft)的 `etcd/raft`(尚未引入)。
 - **自研二进制协议**:定长头 + payload,纯编解码;解码零拷贝,畸形输入返回错误而非 panic(fuzz 覆盖)。
 - **标准库 TCP 服务**:每连接一个 goroutine;订阅成功后连接转为单向推送流;读/写超时、连接上限、panic 隔离、慢消费者丢弃。
 - **批量能力**:批量发布 + 单帧批量 ack、无 ack 发布、客户端攒批(linger)、批量读、推送端 writev 批量写。
@@ -258,7 +258,7 @@ go test ./protocol -fuzz=FuzzReadFrame   -fuzztime=10s
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 分层、并发模型、服务端生命周期、演进接缝 |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | 帧格式、opcode、错误码、长度上限 |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | V0–V5 版本规划 |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | 后续方向(主题制) |
 | [benchmark/RESULT.md](benchmark/RESULT.md) | 基准结果 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发流程、分支策略、提交与发布规范 |
 | [CHANGELOG.md](CHANGELOG.md) | 变更记录 |
