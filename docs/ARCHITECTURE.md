@@ -104,8 +104,8 @@ Subscriber ──► Read: p.mu 下 store.Read ──► 有数据: 推进游标
 
 ## 演进接缝
 
-- `Store` 接口 = WAL 落地点;V3 需补 `Close`/`FirstOffset` 并去掉 `offset == index` 假设。
-- `Partition`/游标模型通向 V1 ack(读游标 vs 提交游标)与 V2 消费组(分区分配)。
-- `Topic` 单分区 → V2 多分区 + key 路由;`OpMessage` 预留 partition 标识。
-- 客户端单连接单订阅 → V1 多路复用。
+- `Store` 接口 = WAL 落地点;持久化(WAL)需补 `Close`/`FirstOffset` 并去掉 `offset == index` 假设。
+- `Partition`/游标模型通向可靠消费(ack:读游标 vs 提交游标)与消费组(分区分配)。
+- `Topic` 单分区 → 多分区 + key 路由;`OpMessage` 预留 partition 标识。
+- 客户端单连接单订阅 → 多路复用。
 - 传输层预留给 netpoll。
