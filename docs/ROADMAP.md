@@ -28,14 +28,20 @@
 
 ### 消费组与多分区
 
-- 组内竞争 / 组间广播;`CreateTopic(name, WithPartitions(n))`;`Publish(topic, key, payload)` 按 key 路由。
-- 组位点用独立 `OffsetStore`/`MetaStore`;成员心跳与分区接管;删除 topic;广播唤醒从 O(subs) 优化。
+- 内核:组内竞争 / 组间广播;`CreateTopic(name, WithPartitions(n))`;`Publish(topic, key, payload)` 按 key 路由。
+- 协议:订阅 / 推送带 partition 标识;组协调 opcode。
+- 组管理:成员心跳、分区分配、超时接管;组位点用独立 `OffsetStore`/`MetaStore`,不复用消息 `Store`。
+- topic 生命周期:删除 topic(与 retention 协同设计)。
+- 广播唤醒优化:`Partition.Publish` 当前在锁内对每个订阅者发信号(O(subs));考虑单通道 / 分片降低开销。
 - 安全:多租户 / 公网前补 TLS 与认证授权。
 
 ### 持久化(WAL)
 
-- 首选 `tidwall/wal`(纯 Go、零依赖、分段 + LSN + `TruncateFront`),藏在 `Store` 接口后;备选手写分段 + 索引。
-- 前置:`Store` 接口扩展(`Close` / `FirstOffset` / `Read` 返回 error / 工厂返回 error);LSN(1-based)↔ offset(0-based)映射、fsync 策略、retention。
+- 实现选型:**首选 `tidwall/wal`**(纯 Go、零依赖、分段 + LSN + `TruncateFront`),藏在 `Store` 接口后;备选手写分段 + 索引(零依赖但需自证崩溃恢复)。二者都需处理 LSN(1-based)↔ offset(0-based)映射、fsync 策略、段大小与 retention。
+- 前置:`Store` 接口扩展(`Close` / `FirstOffset` / `Read` 返回 error,retention 缺口 `ErrOffsetOutOfRetention`);工厂改为 `func(topic) (Store, error)`。
+- 磁盘后端:append-only 顺序写、分段文件 + 索引、尾部截断恢复、段清理。
+- 兼容:去掉 `memoryLog` 的 `offset == index` 假设(以 `Message.Offset` 为准);`CreateTopic` 的 store 构造移出全局锁。
+- 资源:每 topic 字节 / 条数上限 + `ErrBackpressure`;retention 策略。
 
 ### 集群(raft)
 
