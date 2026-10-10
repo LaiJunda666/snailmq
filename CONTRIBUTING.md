@@ -85,6 +85,15 @@ go test ./protocol -fuzz=FuzzReadFrame   -fuzztime=10s
 - 错误用哨兵 + `errors.Is`;跨线错误走协议 `Code` 映射。
 - 不提交注释掉的死代码;不留未处理的错误(errcheck 应干净)。
 
+## 依赖
+
+- **默认零三方运行时依赖**;新增运行时依赖须先与所有者讨论获批(判据见 [AGENTS.md](AGENTS.md))。
+- 必须能被**我们自己的接口隔离**,三方类型不得泄漏进公共 API;尽量做成可选(独立子包 / 嵌套 module)。
+- **一次只开一个例外**。已批准:`go.etcd.io/raft/v3`(集群 / raft)。
+- 候选待评:持久化(WAL)存储库(如 `tidwall/wal`),须藏在 `Store` 接口后。
+- 测试 / lint 工具(dev-only)不受此限。
+- 注意:**build tag 无法把依赖从 `go.mod` 移除**;要根 `go.mod` 保持零依赖只能用**嵌套独立 module**。
+
 ## 文档同步
 
 改动涉及以下内容时同步更新对应文档:
@@ -108,7 +117,7 @@ go test ./protocol -fuzz=FuzzReadFrame   -fuzztime=10s
 
 - 发布由维护者执行;**打 tag 前必须经所有者确认**。
 - 步骤:更新 `CHANGELOG.md`(版本段 + 日期)→ 全量验证(`make fmt/vet/test/build`、`make bench`、demo)→ `git tag -a vX.Y.Z` → push tag。
-- 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/):V0 阶段为 `0.x.y`。
+- 版本号遵循 [SemVer](https://semver.org/lang/zh-CN/);当前 `0.x.y` 阶段。
 
 ## 报告问题
 
