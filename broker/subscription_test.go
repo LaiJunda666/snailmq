@@ -296,3 +296,59 @@ func readAll(t *testing.T, s *Subscription, total int, timeout time.Duration) []
 	}
 	return out
 }
+
+// TestVisibilityTimeoutReplaysUnacked 验证开启可见性超时后,未 ack 的窗口会被整窗重投。
+func TestVisibilityTimeoutReplaysUnacked(t *testing.T) {
+	p := newPartition(newMemoryLog())
+	for _, s := range []string{"a", "b", "c"} {
+		if _, err := p.Publish([]byte(s)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sub, _ := p.Subscribe(WithVisibilityTimeout(30 * time.Millisecond))
+	if got := readAll(t, sub, 3, 0); !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
+		t.Fatalf("first read = %v", got)
+	}
+	// 不 ack,等待超过可见性超时后应重投同样 3 条。
+	time.Sleep(60 * time.Millisecond)
+	if got := readAll(t, sub, 3, 0); !reflect.DeepEqual(got, []string{"a", "b", "c"}) {
+		t.Fatalf("replay = %v; want a b c", got)
+	}
+}
+
+// TestAckStopsReplay 验证 ack 覆盖整个已投递窗口后,超时不再重投。
+func TestAckStopsReplay(t *testing.T) {
+	p := newPartition(newMemoryLog())
+	for _, s := range []string{"a", "b", "c"} {
+		if _, err := p.Publish([]byte(s)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sub, _ := p.Subscribe(WithVisibilityTimeout(30 * time.Millisecond))
+	readAll(t, sub, 3, 0)
+	if err := sub.Ack(2); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := sub.Read(ctx, 10); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v; want DeadlineExceeded (no replay after ack)", err)
+	}
+}
+
+// TestVisibilityDisabledKeepsLegacyBehavior 验证不开启可见性超时时保持既有(尾随读)行为。
+func TestVisibilityDisabledKeepsLegacyBehavior(t *testing.T) {
+	p := newPartition(newMemoryLog())
+	if _, err := p.Publish([]byte("a")); err != nil {
+		t.Fatal(err)
+	}
+	sub, _ := p.Subscribe() // 无选项 = 关闭
+	readAll(t, sub, 1, 0)
+	time.Sleep(40 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	if _, err := sub.Read(ctx, 10); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v; want DeadlineExceeded (visTimeout disabled)", err)
+	}
+}

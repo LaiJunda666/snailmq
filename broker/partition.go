@@ -1,6 +1,9 @@
 package broker
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // Partition 是单个分区:一段有序不可变的日志(经 Store 抽象)连同它的广播订阅者集合。
 //
@@ -86,9 +89,15 @@ func (p *Partition) PublishBatch(payloads [][]byte) (int64, error) {
 }
 
 // Subscribe 注册一个新的广播订阅者,其游标从 offset 0 开始(可读全量历史)。
+// opts 可设置可见性超时(见 WithVisibilityTimeout);不传则保持既有行为(不重投)。
 // 分区已关闭时返回 ErrClosed。返回的 Subscription 同一时刻只能被单个 goroutine
 // 消费,调用方需自行保证(见 Subscription.Read)。
-func (p *Partition) Subscribe() (*Subscription, error) {
+func (p *Partition) Subscribe(opts ...SubscribeOption) (*Subscription, error) {
+	cfg := subscribeConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -97,9 +106,11 @@ func (p *Partition) Subscribe() (*Subscription, error) {
 	}
 
 	s := &Subscription{
-		partition: p,
-		ready:     make(chan struct{}, 1),
-		done:      make(chan struct{}),
+		partition:  p,
+		visTimeout: cfg.visTimeout,
+		progressAt: time.Now(),
+		ready:      make(chan struct{}, 1),
+		done:       make(chan struct{}),
 	}
 	p.subs[s] = struct{}{}
 	return s, nil
@@ -120,6 +131,7 @@ func (p *Partition) unsubscribe(s *Subscription) {
 
 	if _, ok := p.subs[s]; ok {
 		delete(p.subs, s)
+		s.stopTimerLocked()
 		close(s.done)
 	}
 }
@@ -136,6 +148,7 @@ func (p *Partition) close() {
 	}
 	p.closed = true
 	for s := range p.subs {
+		s.stopTimerLocked()
 		close(s.done)
 		delete(p.subs, s)
 	}

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 )
 
 // Option 用于配置 Broker,仅应在 New 时传入。
@@ -34,6 +35,18 @@ func WithStoreFactory(f func() Store) Option {
 // 达到上限后 CreateTopic 返回 ErrTooManyTopics。
 func WithMaxTopics(n int) Option {
 	return func(b *Broker) { b.maxTopics = n }
+}
+
+// subscribeConfig 汇总单个订阅的选项,仅由 Subscribe 构造并传给 Partition。
+type subscribeConfig struct{ visTimeout time.Duration }
+
+// SubscribeOption 配置单个订阅,仅应在 Subscribe 时传入。
+type SubscribeOption func(*subscribeConfig)
+
+// WithVisibilityTimeout 设置订阅的可见性超时(≤0 表示关闭)。
+// 开启后,已投递但未 Ack 的窗口若在该时长内无提交推进,将被整窗重投;重复可接受。
+func WithVisibilityTimeout(d time.Duration) SubscribeOption {
+	return func(c *subscribeConfig) { c.visTimeout = d }
 }
 
 // Broker 是内核门面,组织多个 topic(每 topic 一个分区),线程安全,不依赖网络。
@@ -160,15 +173,16 @@ func (b *Broker) PublishBatch(topic string, payloads [][]byte) (int64, error) {
 }
 
 // Subscribe 为主题注册一个新的广播订阅者(游标从 0 起,可读全量历史)。
+// opts 可设置该订阅的可见性超时(见 WithVisibilityTimeout)。
 // 返回的 Subscription 同一时刻只能被单个 goroutine 消费(见 Subscription.Read)。
 // 主题不存在返回 ErrTopicNotFound;broker 已关闭返回包装后的 ErrClosed(可用 errors.Is 判断)。
-func (b *Broker) Subscribe(topic string) (*Subscription, error) {
+func (b *Broker) Subscribe(topic string, opts ...SubscribeOption) (*Subscription, error) {
 	t, err := b.topic(topic)
 	if err != nil {
 		return nil, wrapClosed("subscribe to", topic, err)
 	}
 
-	return t.partition.Subscribe()
+	return t.partition.Subscribe(opts...)
 }
 
 // SubscriberCount 返回指定主题当前的订阅者数量,用于观测与测试(只读)。

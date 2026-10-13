@@ -1,6 +1,9 @@
 package broker
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Subscription 是单个分区上的一个广播订阅者,维护独立游标。
 //
@@ -20,6 +23,11 @@ type Subscription struct {
 	committed int64         // 已确认水位:[0, committed)
 	ready     chan struct{} // cap-1:分区有新消息时的唤醒信号
 	done      chan struct{} // 订阅被关闭时关闭,用于唤醒阻塞中的 Read
+
+	// 可见性超时(仅 visTimeout > 0 时启用):
+	visTimeout time.Duration // 未确认窗口在该时长内无提交推进则整窗重投;<=0 关闭
+	progressAt time.Time     // cursor/committed 最近一次推进时间,用于可见性判定
+	timer      *time.Timer   // 到期回调 onVisibilityTimeout;仅持 partition.mu 时读写
 }
 
 // Read 阻塞直到取到 [cursor, cursor+max) 中至少一条消息,返回这批消息并推进游标。
@@ -56,9 +64,12 @@ func (s *Subscription) Read(ctx context.Context, max int) ([]Message, error) {
 			p.mu.Unlock()
 			return nil, ErrClosed
 		}
+		// 若未确认窗口已过期,先回退游标,使本次 Read 重投该窗口。
+		s.maybeRewindLocked()
 		msgs := p.store.Read(s.cursor, max)
 		if len(msgs) > 0 {
 			s.cursor = msgs[len(msgs)-1].Offset + 1
+			s.bumpProgressLocked()
 			p.mu.Unlock()
 			return msgs, nil
 		}
@@ -105,6 +116,7 @@ func (s *Subscription) Ack(upTo int64) error {
 	}
 	if newCommitted > s.committed {
 		s.committed = newCommitted
+		s.bumpProgressLocked()
 	}
 	return nil
 }
@@ -114,4 +126,67 @@ func (s *Subscription) Ack(upTo int64) error {
 func (s *Subscription) Close() error {
 	s.partition.unsubscribe(s)
 	return nil
+}
+
+// maybeRewindLocked 在未确认窗口过期时把 cursor 回退到 committed(整窗重投)。
+// 调用方须持有 p.mu;visTimeout<=0 或窗口为空时不做任何事。
+func (s *Subscription) maybeRewindLocked() {
+	if s.visTimeout <= 0 || s.cursor <= s.committed {
+		return
+	}
+	if time.Since(s.progressAt) >= s.visTimeout {
+		s.cursor = s.committed
+		s.progressAt = time.Now()
+	}
+}
+
+// bumpProgressLocked 记录一次游标/提交推进,并按需武装或停用可见性定时器。
+// 调用方须持有 p.mu;仅 visTimeout>0 且存在未确认窗口时保留定时器。
+func (s *Subscription) bumpProgressLocked() {
+	s.progressAt = time.Now()
+	if s.visTimeout <= 0 {
+		return
+	}
+	if s.cursor > s.committed {
+		if s.timer == nil {
+			s.timer = time.AfterFunc(s.visTimeout, s.onVisibilityTimeout)
+		} else {
+			s.timer.Reset(s.visTimeout)
+		}
+	} else {
+		s.stopTimerLocked()
+	}
+}
+
+// stopTimerLocked 停用可见性定时器(若已武装)。调用方须持有 p.mu。
+func (s *Subscription) stopTimerLocked() {
+	if s.timer != nil {
+		s.timer.Stop()
+	}
+}
+
+// onVisibilityTimeout 是可见性定时器回调:未确认窗口仍非空则整窗重投并唤醒阻塞的 Read。
+// 与其它游标读写一样全程持 partition.mu;订阅/分区已关闭则直接返回。
+func (s *Subscription) onVisibilityTimeout() {
+	p := s.partition
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	select {
+	case <-s.done:
+		return
+	default:
+	}
+	if p.closed {
+		return
+	}
+	if s.cursor > s.committed {
+		s.cursor = s.committed
+		s.progressAt = time.Now()
+		select {
+		case s.ready <- struct{}{}:
+		default:
+		}
+		s.bumpProgressLocked()
+	}
 }
