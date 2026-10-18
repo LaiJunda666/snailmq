@@ -31,3 +31,12 @@ func FuzzDecodeMessage(f *testing.F) {
 		_, _, _ = DecodeMessage(data)
 	})
 }
+
+// FuzzDecodeAck 断言 DecodeAck 对任意输入都不 panic。
+func FuzzDecodeAck(f *testing.F) {
+	f.Add([]byte{0, 0, 0, 0, 0, 0, 0, 7})
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = DecodeAck(data)
+	})
+}

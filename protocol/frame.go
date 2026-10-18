@@ -44,6 +44,7 @@ const (
 	OpPublishBatch Opcode = 6 // C→S:同一 topic 的多条消息,服务端回批量 ack
 	OpPublishNoAck Opcode = 7 // C→S:fire-and-forget,服务端不回响应
 	OpListTopics   Opcode = 8 // C→S:列出所有 topic;S→C 回主题名列表
+	OpAck          Opcode = 9 // C→S:累积确认(无响应)
 )
 
 // Code 是 OpError payload 中携带的结构化错误码,

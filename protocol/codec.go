@@ -104,6 +104,17 @@ func DecodePublishAck(b []byte) (base int64, count int, err error) {
 	return int64(binary.LittleEndian.Uint64(b[0:8])), int(binary.LittleEndian.Uint32(b[8:12])), nil
 }
 
+// EncodeAck 生成 OpAck 的 payload:[int64 offset LE](累积确认含端点)。
+func EncodeAck(offset int64) []byte { return binary.LittleEndian.AppendUint64(nil, uint64(offset)) }
+
+// DecodeAck 解析 OpAck;不足 8 字节返回 ErrTruncated。
+func DecodeAck(b []byte) (int64, error) {
+	if len(b) < 8 {
+		return 0, ErrTruncated
+	}
+	return int64(binary.LittleEndian.Uint64(b[:8])), nil
+}
+
 // EncodePublishBatch 生成 OpPublishBatch 的 payload:
 // [u32 topicLen][topic][u32 count][u32 msgLen][msg]...。
 func EncodePublishBatch(topic string, payloads [][]byte) []byte {

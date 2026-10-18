@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"errors"
+	"math"
 	"testing"
 )
 
@@ -254,5 +255,24 @@ func TestOffsetRoundTrip(t *testing.T) {
 	off, err := UnmarshalOffset(b)
 	if err != nil || off != 12345 {
 		t.Fatalf("off=%d err=%v", off, err)
+	}
+}
+
+// TestAckRoundTrip 验证 OpAck 编解码往返,覆盖 0、负数与 int64 边界。
+func TestAckRoundTrip(t *testing.T) {
+	for _, off := range []int64{0, 1, 12345, -1, math.MaxInt64, math.MinInt64} {
+		got, err := DecodeAck(EncodeAck(off))
+		if err != nil || got != off {
+			t.Fatalf("roundtrip %d = %d, %v", off, got, err)
+		}
+	}
+}
+
+// TestDecodeAckTruncated 验证不足 8 字节返回 ErrTruncated。
+func TestDecodeAckTruncated(t *testing.T) {
+	for _, b := range [][]byte{nil, {}, {1}, {1, 2, 3}, make([]byte, 7)} {
+		if _, err := DecodeAck(b); !errors.Is(err, ErrTruncated) {
+			t.Fatalf("DecodeAck(%v) err = %v; want ErrTruncated", b, err)
+		}
 	}
 }

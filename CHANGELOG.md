@@ -12,6 +12,7 @@
 - broker:新增 `PublishBatch`(单次分区锁内追加整批,保证 offset 连续)
 - broker:订阅游标与提交水位分离(`cursor`/`committed`)与累积确认 `Ack(upTo)`(未来位点 clamp、陈旧 ack no-op、负值拒绝)
 - broker:订阅可见性超时(`WithVisibilityTimeout`)与未确认窗口整窗重投(默认关闭;部分 ack 会重置窗口计时)
+- protocol:新增 `OpAck`(=9)编解码,用于客户端累积确认(fire-and-forget)
 
 ### 变更
 
