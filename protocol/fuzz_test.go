@@ -41,12 +41,12 @@ func FuzzDecodeAck(f *testing.F) {
 	})
 }
 
-// FuzzDecodeSubscribe 断言 DecodeSubscribe 对任意输入都不 panic。
-func FuzzDecodeSubscribe(f *testing.F) {
+// FuzzDecodeSubscribeOptions 断言 DecodeSubscribeOptions 对任意输入都不 panic。
+func FuzzDecodeSubscribeOptions(f *testing.F) {
 	f.Add([]byte{6, 0, 0, 0, 'o', 'r', 'd', 'e', 'r', 's', 0})
 	f.Add([]byte{6, 0, 0, 0, 'o', 'r', 'd', 'e', 'r', 's', 1, 0x88, 0x13, 0, 0})
 	f.Add([]byte{})
 	f.Fuzz(func(t *testing.T, data []byte) {
-		_, _, _ = DecodeSubscribe(data)
+		_, _, _ = DecodeSubscribeOptions(data)
 	})
 }

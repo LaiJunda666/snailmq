@@ -77,17 +77,27 @@ func DecodeMessage(p []byte) (offset int64, payload []byte, err error) {
 	return offset, p[12 : 12+int(ml)], nil
 }
 
-// MarshalOffset 将 offset 编码为 8 字节小端,用于 Publish 成功响应。
-func MarshalOffset(o int64) []byte {
-	return binary.LittleEndian.AppendUint64(nil, uint64(o))
+// appendInt64 追加 int64 的小端 8 字节表示(offset / ack 编码共用)。
+func appendInt64(b []byte, v int64) []byte {
+	return binary.LittleEndian.AppendUint64(b, uint64(v))
 }
 
-// UnmarshalOffset 解析 8 字节小端 offset;不足 8 字节返回 ErrTruncated。
-func UnmarshalOffset(b []byte) (int64, error) {
+// readInt64 解析小端 8 字节 int64;不足 8 字节返回 ErrTruncated(offset / ack 解码共用)。
+func readInt64(b []byte) (int64, error) {
 	if len(b) < 8 {
 		return 0, ErrTruncated
 	}
 	return int64(binary.LittleEndian.Uint64(b[:8])), nil
+}
+
+// MarshalOffset 将 offset 编码为 8 字节小端,用于 Publish 成功响应。
+func MarshalOffset(o int64) []byte {
+	return appendInt64(nil, o)
+}
+
+// UnmarshalOffset 解析 8 字节小端 offset;不足 8 字节返回 ErrTruncated。
+func UnmarshalOffset(b []byte) (int64, error) {
+	return readInt64(b)
 }
 
 // EncodePublishAck 生成批量发布 ack 的 payload:[int64 base LE][u32 count LE]。
@@ -105,19 +115,15 @@ func DecodePublishAck(b []byte) (base int64, count int, err error) {
 }
 
 // EncodeAck 生成 OpAck 的 payload:[int64 offset LE](累积确认含端点)。
-func EncodeAck(offset int64) []byte { return binary.LittleEndian.AppendUint64(nil, uint64(offset)) }
+func EncodeAck(offset int64) []byte { return appendInt64(nil, offset) }
 
 // DecodeAck 解析 OpAck;不足 8 字节返回 ErrTruncated。
-func DecodeAck(b []byte) (int64, error) {
-	if len(b) < 8 {
-		return 0, ErrTruncated
-	}
-	return int64(binary.LittleEndian.Uint64(b[:8])), nil
-}
+func DecodeAck(b []byte) (int64, error) { return readInt64(b) }
 
-// EncodeSubscribe 生成 OpSubscribeOptions 的 payload:
+// EncodeSubscribeOptions 生成 OpSubscribeOptions 的 payload:
 // [u32 topicLen][topic][u8 flags](bit0=启用可见性超时)[u32 visTimeoutMs(可选)]。
-func EncodeSubscribe(topic string, visTimeoutMs uint32) []byte {
+// 注意:OpSubscribe(=3)仍是裸 topic 字节,不使用本函数。
+func EncodeSubscribeOptions(topic string, visTimeoutMs uint32) []byte {
 	b := putString(nil, topic)
 	if visTimeoutMs == 0 {
 		return append(b, 0)
@@ -126,9 +132,9 @@ func EncodeSubscribe(topic string, visTimeoutMs uint32) []byte {
 	return binary.LittleEndian.AppendUint32(b, visTimeoutMs)
 }
 
-// DecodeSubscribe 解析 OpSubscribeOptions;flags 缺失、非 0/1 或长度不符返回 ErrInvalidSubscribe。
+// DecodeSubscribeOptions 解析 OpSubscribeOptions;flags 缺失、非 0/1 或长度不符返回 ErrInvalidSubscribe。
 // visTimeoutMs 超 MaxVisibilityTimeoutMs 时截断到上限。
-func DecodeSubscribe(p []byte) (topic string, visTimeoutMs uint32, err error) {
+func DecodeSubscribeOptions(p []byte) (topic string, visTimeoutMs uint32, err error) {
 	if len(p) < 4 {
 		return "", 0, ErrTruncated
 	}
