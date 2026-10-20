@@ -147,6 +147,18 @@ func (b *Broker) Publish(topic string, payload []byte) (int64, error) {
 	return t.partition.Publish(payload)
 }
 
+// PublishBatch 向主题原子地追加一批消息,返回首条 offset;整批 offset 连续 [base, base+len)。
+// payload 以引用方式入队,调用方在返回后不得修改或复用其内容。
+// 主题不存在返回 ErrTopicNotFound;broker 已关闭返回包装后的 ErrClosed(可用 errors.Is 判断)。
+func (b *Broker) PublishBatch(topic string, payloads [][]byte) (int64, error) {
+	t, err := b.topic(topic)
+	if err != nil {
+		return 0, wrapClosed("publish to", topic, err)
+	}
+
+	return t.partition.PublishBatch(payloads)
+}
+
 // Subscribe 为主题注册一个新的广播订阅者(游标从 0 起,可读全量历史)。
 // 返回的 Subscription 同一时刻只能被单个 goroutine 消费(见 Subscription.Read)。
 // 主题不存在返回 ErrTopicNotFound;broker 已关闭返回包装后的 ErrClosed(可用 errors.Is 判断)。

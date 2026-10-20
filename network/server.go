@@ -350,23 +350,15 @@ func (s *Server) stream(ctx context.Context, conn net.Conn, bw *bufio.Writer, su
 	}
 }
 
-// publishBatch 顺序发布一批消息(同 topic),返回首条 offset;任一失败即返回该错误。
-// 偏移在分区锁下连续分配,故整批 offset 为 [base, base+len)。
+// publishBatch 原子发布一批消息(同 topic),返回首条 offset;整批 offset 连续 [base, base+len)。
+// 先校验全部消息大小,避免中途才发现超限导致部分消息已入库。
 func (s *Server) publishBatch(topic string, msgs [][]byte) (int64, error) {
-	var base int64
-	for i, m := range msgs {
+	for _, m := range msgs {
 		if len(m) > protocol.MaxMessage {
 			return 0, fmt.Errorf("network: message exceeds MaxMessage (%d): %w", protocol.MaxMessage, protocol.ErrTooLarge)
 		}
-		off, err := s.broker.Publish(topic, m)
-		if err != nil {
-			return 0, err
-		}
-		if i == 0 {
-			base = off
-		}
 	}
-	return base, nil
+	return s.broker.PublishBatch(topic, msgs)
 }
 
 // respond 写一个响应帧:成功时回与请求相同的 opcode 与 body;
