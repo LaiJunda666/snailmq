@@ -24,6 +24,8 @@ const (
 	// MaxMessage 是单条消息体的上限。推送帧 body = 8(offset)+4(长度)+msg,
 	// 故取 MaxPayload-12,保证任何被接受发布的消息都能装进推送帧。
 	MaxMessage = MaxPayload - 12
+	// MaxVisibilityTimeoutMs 是 OpSubscribeOptions 可见性超时的上限(24h);解码时超出按上限截断。
+	MaxVisibilityTimeoutMs = 24 * 60 * 60 * 1000
 )
 
 var (
@@ -31,6 +33,8 @@ var (
 	ErrBadVersion   = errors.New("protocol: unsupported version")
 	ErrTruncated    = errors.New("protocol: truncated frame")
 	ErrTooLarge     = errors.New("protocol: payload too large")
+	// ErrInvalidSubscribe 表示 OpSubscribeOptions 的 flags/长度布局非法。
+	ErrInvalidSubscribe = errors.New("protocol: invalid subscribe")
 )
 
 type Opcode uint8
@@ -45,6 +49,8 @@ const (
 	OpPublishNoAck Opcode = 7 // C→S:fire-and-forget,服务端不回响应
 	OpListTopics   Opcode = 8 // C→S:列出所有 topic;S→C 回主题名列表
 	OpAck          Opcode = 9 // C→S:累积确认(无响应)
+	// OpSubscribeOptions 是带选项的订阅;payload:[u32 topicLen][topic][u8 flags][u32 visTimeoutMs?]。
+	OpSubscribeOptions Opcode = 10
 )
 
 // Code 是 OpError payload 中携带的结构化错误码,

@@ -40,3 +40,13 @@ func FuzzDecodeAck(f *testing.F) {
 		_, _ = DecodeAck(data)
 	})
 }
+
+// FuzzDecodeSubscribe 断言 DecodeSubscribe 对任意输入都不 panic。
+func FuzzDecodeSubscribe(f *testing.F) {
+	f.Add([]byte{6, 0, 0, 0, 'o', 'r', 'd', 'e', 'r', 's', 0})
+	f.Add([]byte{6, 0, 0, 0, 'o', 'r', 'd', 'e', 'r', 's', 1, 0x88, 0x13, 0, 0})
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _, _ = DecodeSubscribe(data)
+	})
+}

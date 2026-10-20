@@ -276,3 +276,51 @@ func TestDecodeAckTruncated(t *testing.T) {
 		}
 	}
 }
+
+// TestSubscribeOptionsRoundTrip 验证 OpSubscribeOptions 在 flags=0/1 两种布局下的编解码往返。
+func TestSubscribeOptionsRoundTrip(t *testing.T) {
+	// visTimeoutMs=0:flags=0,仅 topic。
+	b1 := EncodeSubscribe("orders", 0)
+	topic, ms, err := DecodeSubscribe(b1)
+	if err != nil || topic != "orders" || ms != 0 {
+		t.Fatalf("b1 topic=%q ms=%d err=%v", topic, ms, err)
+	}
+	// visTimeoutMs>0:flags=1 + visTimeoutMs。
+	b2 := EncodeSubscribe("orders", 5000)
+	topic, ms, err = DecodeSubscribe(b2)
+	if err != nil || topic != "orders" || ms != 5000 {
+		t.Fatalf("b2 topic=%q ms=%d err=%v", topic, ms, err)
+	}
+}
+
+// TestDecodeSubscribeOptionsRejectsMalformed 验证缺 flags、非法 flags、长度不符与截断。
+func TestDecodeSubscribeOptionsRejectsMalformed(t *testing.T) {
+	// topic "orders" 的编码前缀:[u32 len=6]orders
+	prefix := []byte{6, 0, 0, 0, 'o', 'r', 'd', 'e', 'r', 's'}
+	cases := []struct {
+		name string
+		in   []byte
+		want error
+	}{
+		{"missing flags", append([]byte(nil), prefix...), ErrInvalidSubscribe},
+		{"invalid flags", append(append([]byte(nil), prefix...), 0x80), ErrInvalidSubscribe},
+		{"flag set missing ms", append(append([]byte(nil), prefix...), 1), ErrInvalidSubscribe},
+		{"flag clear trailing bytes", append(append([]byte(nil), prefix...), 0, 9), ErrInvalidSubscribe},
+		{"truncated length", []byte{1, 2}, ErrTruncated},
+		{"truncated topic", []byte{6, 0, 0, 0, 'o'}, ErrTruncated},
+	}
+	for _, c := range cases {
+		if _, _, err := DecodeSubscribe(c.in); !errors.Is(err, c.want) {
+			t.Fatalf("%s: err = %v; want %v", c.name, err, c.want)
+		}
+	}
+}
+
+// TestEncodeSubscribeClampsVisibility 验证 visTimeoutMs 超上限时在解码侧截断到上限。
+func TestEncodeSubscribeClampsVisibility(t *testing.T) {
+	b := EncodeSubscribe("t", MaxVisibilityTimeoutMs+1)
+	_, ms, err := DecodeSubscribe(b)
+	if err != nil || ms != MaxVisibilityTimeoutMs {
+		t.Fatalf("ms=%d err=%v; want clamp %d", ms, err, MaxVisibilityTimeoutMs)
+	}
+}

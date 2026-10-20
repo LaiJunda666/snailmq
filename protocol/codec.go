@@ -115,6 +115,59 @@ func DecodeAck(b []byte) (int64, error) {
 	return int64(binary.LittleEndian.Uint64(b[:8])), nil
 }
 
+// EncodeSubscribe 生成 OpSubscribeOptions 的 payload:
+// [u32 topicLen][topic][u8 flags](bit0=启用可见性超时)[u32 visTimeoutMs(可选)]。
+func EncodeSubscribe(topic string, visTimeoutMs uint32) []byte {
+	b := putString(nil, topic)
+	if visTimeoutMs == 0 {
+		return append(b, 0)
+	}
+	b = append(b, 1)
+	return binary.LittleEndian.AppendUint32(b, visTimeoutMs)
+}
+
+// DecodeSubscribe 解析 OpSubscribeOptions;flags 缺失、非 0/1 或长度不符返回 ErrInvalidSubscribe。
+// visTimeoutMs 超 MaxVisibilityTimeoutMs 时截断到上限。
+func DecodeSubscribe(p []byte) (topic string, visTimeoutMs uint32, err error) {
+	if len(p) < 4 {
+		return "", 0, ErrTruncated
+	}
+	tl := int64(binary.LittleEndian.Uint32(p[0:4]))
+	pos := 4
+	if tl > int64(len(p)-pos) {
+		return "", 0, ErrTruncated
+	}
+	topic = string(p[pos : pos+int(tl)])
+	pos += int(tl)
+
+	if len(p)-pos == 0 {
+		return "", 0, ErrInvalidSubscribe // 缺 flags 字节
+	}
+	flags := p[pos]
+	pos++
+	if flags&^1 != 0 {
+		return "", 0, ErrInvalidSubscribe
+	}
+	if flags&1 == 0 {
+		if len(p)-pos != 0 {
+			return "", 0, ErrInvalidSubscribe
+		}
+		return topic, 0, nil
+	}
+	if len(p)-pos < 4 {
+		return "", 0, ErrInvalidSubscribe
+	}
+	ms := binary.LittleEndian.Uint32(p[pos : pos+4])
+	pos += 4
+	if len(p)-pos != 0 {
+		return "", 0, ErrInvalidSubscribe
+	}
+	if ms > MaxVisibilityTimeoutMs {
+		ms = MaxVisibilityTimeoutMs
+	}
+	return topic, ms, nil
+}
+
 // EncodePublishBatch 生成 OpPublishBatch 的 payload:
 // [u32 topicLen][topic][u32 count][u32 msgLen][msg]...。
 func EncodePublishBatch(topic string, payloads [][]byte) []byte {
