@@ -25,6 +25,7 @@
 
 - network:`PublishAsync` 补齐与 `Publish` 一致的本地校验(非法/过长 topic、超限 payload),不再发往服务端被静默丢弃
 - network:批量发布改用原子 `PublishBatch`,修复同 topic 并发发布时 `[base, base+n)` 不连续
+- network:客户端映射 `CodeInvalidSubscribe` 为 `protocol.ErrInvalidSubscribe`(此前退化为纯文本)
 
 ## [0.2.0] - 2026-09-21
 

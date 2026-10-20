@@ -459,6 +459,8 @@ func remoteError(code protocol.Code, msg string) error {
 		return fmt.Errorf("%s: %w", msg, broker.ErrInvalidTopicName)
 	case protocol.CodeTooManyTopics:
 		return fmt.Errorf("%s: %w", msg, broker.ErrTooManyTopics)
+	case protocol.CodeInvalidSubscribe:
+		return fmt.Errorf("%s: %w", msg, protocol.ErrInvalidSubscribe)
 	default:
 		return errors.New(msg)
 	}
