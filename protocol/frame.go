@@ -68,6 +68,8 @@ const (
 	CodeTopicNameTooLong
 	CodeInvalidTopicName
 	CodeTooManyTopics
+	// CodeInvalidSubscribe 表示 OpSubscribeOptions 的 flags/长度布局非法。
+	CodeInvalidSubscribe
 )
 
 func EncodeFrame(op Opcode, payload []byte) []byte {

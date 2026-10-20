@@ -293,6 +293,13 @@ func TestSubscribeOptionsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestCodeInvalidSubscribeWireValue 锁定 CodeInvalidSubscribe 的线上数值(追加在末尾,保持既有码不变)。
+func TestCodeInvalidSubscribeWireValue(t *testing.T) {
+	if CodeInvalidSubscribe != 10 {
+		t.Fatalf("CodeInvalidSubscribe = %d; want 10", CodeInvalidSubscribe)
+	}
+}
+
 // TestDecodeSubscribeOptionsRejectsMalformed 验证缺 flags、非法 flags、长度不符与截断。
 func TestDecodeSubscribeOptionsRejectsMalformed(t *testing.T) {
 	// topic "orders" 的编码前缀:[u32 len=6]orders

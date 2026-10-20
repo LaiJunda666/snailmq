@@ -14,6 +14,7 @@
 - broker:订阅可见性超时(`WithVisibilityTimeout`)与未确认窗口整窗重投(默认关闭;部分 ack 会重置窗口计时)
 - protocol:新增 `OpAck`(=9)编解码,用于客户端累积确认(fire-and-forget)
 - protocol:新增 `OpSubscribeOptions`(=10)编解码(订阅时携带可见性超时;`OpSubscribe` 保持不变)
+- protocol:新增 `CodeInvalidSubscribe`(=10)错误码(畸形订阅选项)
 
 ### 变更
 
