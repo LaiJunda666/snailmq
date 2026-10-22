@@ -49,6 +49,42 @@ func (p *Partition) Publish(payload []byte) (int64, error) {
 	return off, nil
 }
 
+// PublishBatch 在单次分区锁内追加整批消息,返回首条 offset。
+// 整批 offset 连续,即 [base, base+len(payloads));空批返回 (0, nil)。
+// 与 Publish 一样,payload 以引用方式保存,调用方在返回后不得再修改其内容。
+// 若底层 Append 中途失败,已追加的前缀会保留,并返回该错误(与逐条发布一致)。
+func (p *Partition) PublishBatch(payloads [][]byte) (int64, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.closed {
+		return 0, ErrClosed
+	}
+	if len(payloads) == 0 {
+		return 0, nil
+	}
+
+	var base int64
+	for i, payload := range payloads {
+		off, err := p.store.Append(payload)
+		if err != nil {
+			return 0, err
+		}
+		if i == 0 {
+			base = off
+		}
+	}
+
+	// 整批只唤醒一次:订阅者醒来后按自身游标读取,不会漏。
+	for s := range p.subs {
+		select {
+		case s.ready <- struct{}{}:
+		default:
+		}
+	}
+	return base, nil
+}
+
 // Subscribe 注册一个新的广播订阅者,其游标从 offset 0 开始(可读全量历史)。
 // 分区已关闭时返回 ErrClosed。返回的 Subscription 同一时刻只能被单个 goroutine
 // 消费,调用方需自行保证(见 Subscription.Read)。
